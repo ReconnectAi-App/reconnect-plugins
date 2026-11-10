@@ -4131,6 +4131,9 @@ var RULES = [
   { kind: "npm_token", re: /\bnpm_[A-Za-z0-9]{30,}/g },
   // Reconnect device tokens: "rcd_" + 43 base64url characters (SPEC F15).
   { kind: "reconnect_device_token", re: /\brcd_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
+  // Reconnect session and invite tokens: "rcs_" / "rci_" + 43 base64url characters (SPEC-v2).
+  { kind: "reconnect_session_token", re: /\brcs_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
+  { kind: "reconnect_invite_token", re: /\brci_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
   {
     kind: "azure_storage_key",
     re: /\b(AccountKey\s*=\s*)[^;\s"']+/gi,
@@ -4495,6 +4498,7 @@ var SourceViewSchema = external_exports.object({
   lastCheckedAt: iso2.nullable()
 });
 var SourcesResponseSchema = external_exports.object({
+  /** The caller's workspace. The connections listed are the caller's own. */
   org: external_exports.object({ id: external_exports.string(), name: external_exports.string() }),
   sources: external_exports.array(SourceViewSchema)
 });
@@ -4586,6 +4590,57 @@ var DeviceTokenResponseSchema = external_exports.object({
   token: external_exports.string(),
   device: DeviceDtoSchema
 });
+
+// ../shared/dist/esm/auth.js
+var ORG_ROLES = ["owner", "member"];
+var OrgRoleSchema = external_exports.enum(ORG_ROLES);
+var UserDtoSchema = external_exports.object({
+  id: external_exports.string(),
+  name: external_exports.string(),
+  avatarUrl: external_exports.string().nullable(),
+  email: external_exports.string().nullable(),
+  /** GitHub login of the linked identity; null for the bootstrap owner before the first sign-in. */
+  githubLogin: external_exports.string().nullable(),
+  createdAt: external_exports.string()
+});
+var OrgRefSchema = external_exports.object({ id: external_exports.string(), name: external_exports.string() });
+var MeResponseSchema = external_exports.object({
+  user: UserDtoSchema,
+  org: OrgRefSchema,
+  role: OrgRoleSchema
+});
+var INVITE_KINDS = ["own_workspace", "join"];
+var InviteKindSchema = external_exports.enum(INVITE_KINDS);
+var InviteCreateRequestSchema = external_exports.object({
+  kind: InviteKindSchema,
+  /** Only for `join`. Default `member`. */
+  role: OrgRoleSchema.optional()
+}).strict();
+var InviteCreateResponseSchema = external_exports.object({
+  id: external_exports.string(),
+  url: external_exports.string(),
+  expiresAt: external_exports.string()
+});
+var InviteDtoSchema = external_exports.object({
+  id: external_exports.string(),
+  kind: InviteKindSchema,
+  role: OrgRoleSchema,
+  createdAt: external_exports.string(),
+  expiresAt: external_exports.string(),
+  createdByName: external_exports.string()
+});
+var InviteListSchema = external_exports.array(InviteDtoSchema);
+var InvitePreviewSchema = external_exports.object({
+  inviterName: external_exports.string().nullable(),
+  kind: InviteKindSchema.nullable(),
+  valid: external_exports.boolean()
+});
+var PersonDtoSchema = UserDtoSchema.extend({
+  role: OrgRoleSchema,
+  joinedAt: external_exports.string()
+});
+var PeopleListSchema = external_exports.array(PersonDtoSchema);
+var DeleteMeRequestSchema = external_exports.object({ confirm: external_exports.literal("DELETE") }).strict();
 
 // src/config.ts
 import { readFileSync } from "node:fs";
