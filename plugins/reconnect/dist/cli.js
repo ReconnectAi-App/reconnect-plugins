@@ -4654,7 +4654,9 @@ var OrgRefSchema = external_exports.object({ id: external_exports.string(), name
 var MeResponseSchema = external_exports.object({
   user: UserDtoSchema,
   org: OrgRefSchema,
-  role: OrgRoleSchema
+  role: OrgRoleSchema,
+  /** The platform admin (the bootstrap owner usr_owner) sees the waitlist (SPEC-v2 V2-F6). */
+  isPlatformAdmin: external_exports.boolean().default(false)
 });
 var INVITE_KINDS = ["own_workspace", "join"];
 var InviteKindSchema = external_exports.enum(INVITE_KINDS);
@@ -4688,6 +4690,49 @@ var PersonDtoSchema = UserDtoSchema.extend({
 });
 var PeopleListSchema = external_exports.array(PersonDtoSchema);
 var DeleteMeRequestSchema = external_exports.object({ confirm: external_exports.literal("DELETE") }).strict();
+
+// ../shared/dist/esm/waitlist.js
+var WAITLIST_STATUSES = ["waiting", "invited", "declined"];
+var WaitlistStatusSchema = external_exports.enum(WAITLIST_STATUSES);
+var WAITLIST_EMAIL_MAX = 254;
+var WAITLIST_NOTE_MAX = 500;
+var GITHUB_LOGIN_MAX = 39;
+var GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+var blankToUndefined = (v) => typeof v === "string" && v.trim() === "" ? void 0 : v;
+var WaitlistJoinRequestSchema = external_exports.object({
+  email: external_exports.string().trim().toLowerCase().min(1, "Enter your email address.").max(WAITLIST_EMAIL_MAX, "The email address is too long.").email("Enter a valid email address."),
+  /** GitHub user name. A leading "@" is removed. */
+  githubLogin: external_exports.preprocess((v) => typeof v === "string" ? blankToUndefined(v.trim().replace(/^@/, "")) : v, external_exports.string().max(GITHUB_LOGIN_MAX, "A GitHub user name has at most 39 characters.").regex(GITHUB_LOGIN_PATTERN, "Enter a valid GitHub user name.").optional()),
+  /** The person's own words. Kept verbatim; the API replaces only secrets before it stores it. */
+  note: external_exports.preprocess(blankToUndefined, external_exports.string().max(WAITLIST_NOTE_MAX, "Use at most 500 characters.").optional()),
+  /** Honeypot: people never see this field. When it is not empty, the API stores nothing. */
+  website: external_exports.string().max(2e3).optional()
+});
+var WaitlistJoinResponseSchema = external_exports.object({ ok: external_exports.literal(true) });
+var WAITLIST_INVITE_STATES = ["open", "used", "expired", "canceled"];
+var WaitlistInviteStateSchema = external_exports.enum(WAITLIST_INVITE_STATES);
+var WaitlistEntryDtoSchema = external_exports.object({
+  id: external_exports.string(),
+  email: external_exports.string(),
+  githubLogin: external_exports.string().nullable(),
+  /** Verbatim (secrets replaced). Show it as it is: never trim inside or reformat. */
+  note: external_exports.string().nullable(),
+  status: WaitlistStatusSchema,
+  createdAt: external_exports.string(),
+  decidedAt: external_exports.string().nullable(),
+  /** Null when no invite was made (or it was deleted). */
+  inviteState: WaitlistInviteStateSchema.nullable(),
+  inviteExpiresAt: external_exports.string().nullable()
+});
+var WaitlistPageSchema = external_exports.object({
+  entries: external_exports.array(WaitlistEntryDtoSchema),
+  /** Pass as `cursor` to get the next page. Null on the last page. */
+  nextCursor: external_exports.string().nullable()
+});
+var WaitlistInviteResponseSchema = external_exports.object({
+  url: external_exports.string(),
+  expiresAt: external_exports.string()
+});
 
 // src/config.ts
 import { readFileSync } from "node:fs";
@@ -4784,8 +4829,22 @@ var MSG = {
   cancelled: "Not connected. You clicked Cancel.",
   failed: "Could not connect this computer. Run /reconnect:connect again.",
   pageOk: "Connected. You can close this tab and go back to Claude Code.",
-  otherToken: "Note: a token set by your organization or in the plugin settings is used before this one."
+  otherToken: "Note: a token set by your organization or in the plugin settings is used before this one.",
+  badUrl: "Not connected. The address must start with http:// or https://, for example https://api.reconnect-ai.me or http://localhost:4317."
 };
+function parseServerUrl(raw) {
+  const text = raw.trim();
+  if (!text || /\s/.test(text) || text.length > 2e3) return null;
+  let u;
+  try {
+    u = new URL(text);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (!u.hostname || u.username || u.password || u.search || u.hash) return null;
+  return text.replace(/\/+$/, "");
+}
 var b64url = (b) => b.toString("base64url");
 var sha = (s) => createHash("sha256").update(s).digest();
 var defaultDeviceName = (host = hostname()) => host.replace(/\.local$/i, "");
@@ -4836,8 +4895,13 @@ async function healthy(apiUrl) {
 }
 async function connect(opts, deps) {
   const { cfg, out } = deps;
-  const apiUrl = (opts.url?.trim() || cfg.url).replace(/\/+$/, "");
-  const webUrl = opts.url?.trim() && cfg.webUrl === cfg.url ? apiUrl : cfg.webUrl;
+  const given = opts.url?.trim() ? parseServerUrl(opts.url) : void 0;
+  if (given === null) {
+    out(MSG.badUrl + "\n");
+    return 1;
+  }
+  const apiUrl = (given ?? cfg.url).replace(/\/+$/, "");
+  const webUrl = given && cfg.webUrl === cfg.url ? apiUrl : cfg.webUrl;
   const deviceName = opts.name?.trim() || defaultDeviceName();
   if (!await healthy(apiUrl)) {
     out(
