@@ -1,0 +1,14 @@
+{
+  "name": "reconnect-plugins",
+  "owner": {
+    "name": "Andres Carmona"
+  },
+  "description": "Claude Code plugins for Reconnect: get back into any agent lane in about 30 seconds.",
+  "plugins": [
+    {
+      "name": "reconnect",
+      "source": "./plugins/reconnect",
+      "description": "Sends your Claude Code session events to Reconnect, so you can get back into any lane in about 30 seconds. Never blocks Claude Code."
+    }
+  ]
+}

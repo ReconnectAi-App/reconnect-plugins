@@ -1,0 +1,33 @@
+{
+  "name": "reconnect",
+  "displayName": "Reconnect",
+  "version": "1.0.0",
+  "description": "Sends your Claude Code session events to Reconnect, so you can get back into any lane in about 30 seconds. Never blocks Claude Code.",
+  "author": {
+    "name": "Andres Carmona"
+  },
+  "homepage": "https://github.com/andres-carmona/reconnect-plugins",
+  "repository": "https://github.com/andres-carmona/reconnect-plugins",
+  "keywords": [
+    "reconnect",
+    "hooks",
+    "sessions",
+    "lanes"
+  ],
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "Reconnect address",
+      "description": "The address of your Reconnect server, for example http://localhost:4317 or your Tailscale name. Leave empty if your organization set it for you.",
+      "default": "http://localhost:4317",
+      "required": false
+    },
+    "token": {
+      "type": "string",
+      "title": "Reconnect token",
+      "description": "The RECONNECT_TOKEN of your Reconnect server. Leave empty if your organization set it for you.",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}
