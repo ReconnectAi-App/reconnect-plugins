@@ -4111,7 +4111,19 @@ var RULES = [
   { kind: "openai_key", re: /\bsk-[A-Za-z0-9_-]{20,}/g },
   { kind: "github_token", re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { kind: "slack_token", re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g },
+  // AWS access key IDs: long-term (AKIA…) and temporary (ASIA…).
   { kind: "aws_key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  // Amazon Bedrock API keys. Long-term: "ABSK" + base64 ("BedrockAPIKey-…"). Short-term:
+  // "bedrock-api-key-" + base64 of a presigned URL (often more than 1000 characters).
+  { kind: "bedrock_api_key", re: /\bABSK[A-Za-z0-9+/]{20,}={0,2}/g },
+  { kind: "bedrock_api_key", re: /\bbedrock-api-key-[A-Za-z0-9+/_-]{40,}={0,2}/g },
+  // AWS secret access keys (40 characters) have no prefix, so only match them next to their name:
+  // AWS_SECRET_ACCESS_KEY=…, aws_secret_access_key = …, "secretAccessKey": "…".
+  {
+    kind: "aws_secret_key",
+    re: /((?:aws[ _-]?)?secret[ _-]?access[ _-]?key["']?\s*[=:]\s*["']?)[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/gi,
+    with: "$1[REDACTED:aws_secret_key]"
+  },
   // Atlassian API tokens: "ATATT" + ~180 base64url characters.
   { kind: "atlassian_token", re: /\bATATT[A-Za-z0-9_=-]{20,}/g },
   // Azure DevOps PATs have no prefix, so only match them in a context that names them.
@@ -4523,29 +4535,64 @@ var MODEL_PROVIDERS = ["anthropic", "bedrock"];
 var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
 var AWS_PROFILE_PATTERN = /^[A-Za-z0-9_.@+-]{1,64}$/;
 var emptyToUndefined = (v) => typeof v === "string" && !v.trim() ? void 0 : v;
-var SaveModelSettingsSchema = external_exports.discriminatedUnion("provider", [
+var BEDROCK_AUTH = ["api_key", "access_key", "server"];
+var AWS_ACCESS_KEY_ID_PATTERN = /^(AKIA|ASIA)[A-Z0-9]{16}$/;
+var awsRegion = external_exports.string().trim().toLowerCase().regex(AWS_REGION_PATTERN, "Enter an AWS region, e.g. us-east-1");
+var AnthropicSettings = external_exports.object({
+  provider: external_exports.literal("anthropic"),
+  apiKey: external_exports.string().trim().min(8, "Paste the whole API key").max(500)
+}).strict();
+var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
   external_exports.object({
-    provider: external_exports.literal("anthropic"),
-    apiKey: external_exports.string().trim().min(8, "Paste the whole API key").max(500)
+    provider: external_exports.literal("bedrock"),
+    awsAuth: external_exports.literal("api_key"),
+    awsRegion,
+    apiKey: external_exports.string().trim().min(20, "Paste the whole Bedrock API key").max(4e3, "Paste the whole Bedrock API key")
   }).strict(),
   external_exports.object({
     provider: external_exports.literal("bedrock"),
-    awsRegion: external_exports.string().trim().toLowerCase().regex(AWS_REGION_PATTERN, "Enter an AWS region, e.g. us-east-1"),
+    awsAuth: external_exports.literal("access_key"),
+    awsRegion,
+    awsAccessKeyId: external_exports.string().trim().regex(AWS_ACCESS_KEY_ID_PATTERN, "Enter an access key ID, e.g. AKIA\u2026"),
+    awsSecretAccessKey: external_exports.string().trim().length(40, "Paste the whole secret access key"),
+    awsSessionToken: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().max(4e3, "The session token is too long").optional())
+  }).strict(),
+  external_exports.object({
+    provider: external_exports.literal("bedrock"),
+    awsAuth: external_exports.literal("server"),
+    awsRegion,
     awsProfile: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(AWS_PROFILE_PATTERN, "Use letters, digits and - _ . @ + only").optional())
   }).strict()
 ]);
+var SaveModelSettingsBody = external_exports.union([AnthropicSettings, BedrockSettings]);
+function defaultBedrockAuth(v) {
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v;
+    if (o.provider === "bedrock" && o.awsAuth === void 0)
+      return { ...o, awsAuth: "server" };
+  }
+  return v;
+}
+var SaveModelSettingsSchema = external_exports.preprocess(defaultBedrockAuth, SaveModelSettingsBody);
 var iso3 = external_exports.string().datetime({ offset: true });
 var ModelSettingsViewSchema = external_exports.object({
   /** settings = saved in Settings; env = the server .env file (backup); none = no AI model. */
   source: external_exports.enum(["settings", "env", "none"]),
   provider: external_exports.enum(MODEL_PROVIDERS).nullable(),
-  /** Last 4 characters of the Claude API key. The key itself is never returned. */
+  /**
+   * Last 4 characters of the Claude API key, of the Bedrock API key or of the AWS access key ID.
+   * The key itself is never returned.
+   */
   keyHint: external_exports.string().nullable(),
   awsRegion: external_exports.string().nullable(),
+  /** How Bedrock connects to AWS (bedrock only). */
+  awsAuth: external_exports.enum(BEDROCK_AUTH).nullable(),
   awsProfile: external_exports.string().nullable(),
   status: external_exports.enum(["untested", "ok", "error"]).nullable(),
   statusMessage: external_exports.string().nullable(),
-  lastCheckedAt: iso3.nullable()
+  lastCheckedAt: iso3.nullable(),
+  /** True only when the API lets this user choose `awsAuth: server` (local install, usr_owner). */
+  serverSignInAllowed: external_exports.boolean()
 });
 
 // ../shared/dist/esm/devices.js
