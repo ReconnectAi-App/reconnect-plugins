@@ -13,7 +13,7 @@ you can get back into any lane in about 30 seconds. The plugin never blocks Clau
 In Claude Code, type these two commands:
 
 ```text
-/plugin marketplace add andres-carmona/reconnect-plugins
+/plugin marketplace add ReconnectAi-App/reconnect-plugins
 /plugin install reconnect@reconnect-plugins
 ```
 
