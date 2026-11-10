@@ -570,18 +570,18 @@ var ParseStatus = class _ParseStatus {
     if (this.value !== "aborted")
       this.value = "aborted";
   }
-  static mergeArray(status, results) {
+  static mergeArray(status2, results) {
     const arrayValue = [];
     for (const s of results) {
       if (s.status === "aborted")
         return INVALID;
       if (s.status === "dirty")
-        status.dirty();
+        status2.dirty();
       arrayValue.push(s.value);
     }
-    return { status: status.value, value: arrayValue };
+    return { status: status2.value, value: arrayValue };
   }
-  static async mergeObjectAsync(status, pairs) {
+  static async mergeObjectAsync(status2, pairs) {
     const syncPairs = [];
     for (const pair of pairs) {
       const key = await pair.key;
@@ -591,9 +591,9 @@ var ParseStatus = class _ParseStatus {
         value
       });
     }
-    return _ParseStatus.mergeObjectSync(status, syncPairs);
+    return _ParseStatus.mergeObjectSync(status2, syncPairs);
   }
-  static mergeObjectSync(status, pairs) {
+  static mergeObjectSync(status2, pairs) {
     const finalObject = {};
     for (const pair of pairs) {
       const { key, value } = pair;
@@ -602,14 +602,14 @@ var ParseStatus = class _ParseStatus {
       if (value.status === "aborted")
         return INVALID;
       if (key.status === "dirty")
-        status.dirty();
+        status2.dirty();
       if (value.status === "dirty")
-        status.dirty();
+        status2.dirty();
       if (key.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
         finalObject[key.value] = value.value;
       }
     }
-    return { status: status.value, value: finalObject };
+    return { status: status2.value, value: finalObject };
   }
 };
 var INVALID = Object.freeze({
@@ -1069,7 +1069,7 @@ var ZodString = class _ZodString extends ZodType {
       });
       return INVALID;
     }
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     let ctx = void 0;
     for (const check of this._def.checks) {
       if (check.kind === "min") {
@@ -1083,7 +1083,7 @@ var ZodString = class _ZodString extends ZodType {
             exact: false,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "max") {
         if (input.data.length > check.value) {
@@ -1096,7 +1096,7 @@ var ZodString = class _ZodString extends ZodType {
             exact: false,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "length") {
         const tooBig = input.data.length > check.value;
@@ -1122,7 +1122,7 @@ var ZodString = class _ZodString extends ZodType {
               message: check.message
             });
           }
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "email") {
         if (!emailRegex.test(input.data)) {
@@ -1132,7 +1132,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "emoji") {
         if (!emojiRegex) {
@@ -1145,7 +1145,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "uuid") {
         if (!uuidRegex.test(input.data)) {
@@ -1155,7 +1155,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "nanoid") {
         if (!nanoidRegex.test(input.data)) {
@@ -1165,7 +1165,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "cuid") {
         if (!cuidRegex.test(input.data)) {
@@ -1175,7 +1175,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "cuid2") {
         if (!cuid2Regex.test(input.data)) {
@@ -1185,7 +1185,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "ulid") {
         if (!ulidRegex.test(input.data)) {
@@ -1195,7 +1195,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "url") {
         try {
@@ -1207,7 +1207,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "regex") {
         check.regex.lastIndex = 0;
@@ -1219,7 +1219,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "trim") {
         input.data = input.data.trim();
@@ -1231,7 +1231,7 @@ var ZodString = class _ZodString extends ZodType {
             validation: { includes: check.value, position: check.position },
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "toLowerCase") {
         input.data = input.data.toLowerCase();
@@ -1245,7 +1245,7 @@ var ZodString = class _ZodString extends ZodType {
             validation: { startsWith: check.value },
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "endsWith") {
         if (!input.data.endsWith(check.value)) {
@@ -1255,7 +1255,7 @@ var ZodString = class _ZodString extends ZodType {
             validation: { endsWith: check.value },
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "datetime") {
         const regex = datetimeRegex(check);
@@ -1266,7 +1266,7 @@ var ZodString = class _ZodString extends ZodType {
             validation: "datetime",
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "date") {
         const regex = dateRegex;
@@ -1277,7 +1277,7 @@ var ZodString = class _ZodString extends ZodType {
             validation: "date",
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "time") {
         const regex = timeRegex(check);
@@ -1288,7 +1288,7 @@ var ZodString = class _ZodString extends ZodType {
             validation: "time",
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "duration") {
         if (!durationRegex.test(input.data)) {
@@ -1298,7 +1298,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "ip") {
         if (!isValidIP(input.data, check.version)) {
@@ -1308,7 +1308,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "jwt") {
         if (!isValidJWT(input.data, check.alg)) {
@@ -1318,7 +1318,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "cidr") {
         if (!isValidCidr(input.data, check.version)) {
@@ -1328,7 +1328,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "base64") {
         if (!base64Regex.test(input.data)) {
@@ -1338,7 +1338,7 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "base64url") {
         if (!base64urlRegex.test(input.data)) {
@@ -1348,13 +1348,13 @@ var ZodString = class _ZodString extends ZodType {
             code: ZodIssueCode.invalid_string,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check);
       }
     }
-    return { status: status.value, value: input.data };
+    return { status: status2.value, value: input.data };
   }
   _regex(regex, validation, message) {
     return this.refinement((data) => regex.test(data), {
@@ -1630,7 +1630,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
       return INVALID;
     }
     let ctx = void 0;
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     for (const check of this._def.checks) {
       if (check.kind === "int") {
         if (!util.isInteger(input.data)) {
@@ -1641,7 +1641,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             received: "float",
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "min") {
         const tooSmall = check.inclusive ? input.data < check.value : input.data <= check.value;
@@ -1655,7 +1655,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             exact: false,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "max") {
         const tooBig = check.inclusive ? input.data > check.value : input.data >= check.value;
@@ -1669,7 +1669,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             exact: false,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "multipleOf") {
         if (floatSafeRemainder(input.data, check.value) !== 0) {
@@ -1679,7 +1679,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
             multipleOf: check.value,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "finite") {
         if (!Number.isFinite(input.data)) {
@@ -1688,13 +1688,13 @@ var ZodNumber = class _ZodNumber extends ZodType {
             code: ZodIssueCode.not_finite,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check);
       }
     }
-    return { status: status.value, value: input.data };
+    return { status: status2.value, value: input.data };
   }
   gte(value, message) {
     return this.setLimit("min", value, true, errorUtil.toString(message));
@@ -1859,7 +1859,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
       return this._getInvalidInput(input);
     }
     let ctx = void 0;
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     for (const check of this._def.checks) {
       if (check.kind === "min") {
         const tooSmall = check.inclusive ? input.data < check.value : input.data <= check.value;
@@ -1872,7 +1872,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             inclusive: check.inclusive,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "max") {
         const tooBig = check.inclusive ? input.data > check.value : input.data >= check.value;
@@ -1885,7 +1885,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             inclusive: check.inclusive,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "multipleOf") {
         if (input.data % check.value !== BigInt(0)) {
@@ -1895,13 +1895,13 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
             multipleOf: check.value,
             message: check.message
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check);
       }
     }
-    return { status: status.value, value: input.data };
+    return { status: status2.value, value: input.data };
   }
   _getInvalidInput(input) {
     const ctx = this._getOrReturnCtx(input);
@@ -2059,7 +2059,7 @@ var ZodDate = class _ZodDate extends ZodType {
       });
       return INVALID;
     }
-    const status = new ParseStatus();
+    const status2 = new ParseStatus();
     let ctx = void 0;
     for (const check of this._def.checks) {
       if (check.kind === "min") {
@@ -2073,7 +2073,7 @@ var ZodDate = class _ZodDate extends ZodType {
             minimum: check.value,
             type: "date"
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (check.kind === "max") {
         if (input.data.getTime() > check.value) {
@@ -2086,14 +2086,14 @@ var ZodDate = class _ZodDate extends ZodType {
             maximum: check.value,
             type: "date"
           });
-          status.dirty();
+          status2.dirty();
         }
       } else {
         util.assertNever(check);
       }
     }
     return {
-      status: status.value,
+      status: status2.value,
       value: new Date(input.data.getTime())
     };
   }
@@ -2279,7 +2279,7 @@ ZodVoid.create = (params) => {
 };
 var ZodArray = class _ZodArray extends ZodType {
   _parse(input) {
-    const { ctx, status } = this._processInputParams(input);
+    const { ctx, status: status2 } = this._processInputParams(input);
     const def = this._def;
     if (ctx.parsedType !== ZodParsedType.array) {
       addIssueToContext(ctx, {
@@ -2302,7 +2302,7 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: true,
           message: def.exactLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.minLength !== null) {
@@ -2315,7 +2315,7 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: false,
           message: def.minLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.maxLength !== null) {
@@ -2328,20 +2328,20 @@ var ZodArray = class _ZodArray extends ZodType {
           exact: false,
           message: def.maxLength.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (ctx.common.async) {
       return Promise.all([...ctx.data].map((item, i) => {
         return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
       })).then((result2) => {
-        return ParseStatus.mergeArray(status, result2);
+        return ParseStatus.mergeArray(status2, result2);
       });
     }
     const result = [...ctx.data].map((item, i) => {
       return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
     });
-    return ParseStatus.mergeArray(status, result);
+    return ParseStatus.mergeArray(status2, result);
   }
   get element() {
     return this._def.type;
@@ -2430,7 +2430,7 @@ var ZodObject = class _ZodObject extends ZodType {
       });
       return INVALID;
     }
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     const { shape, keys: shapeKeys } = this._getCached();
     const extraKeys = [];
     if (!(this._def.catchall instanceof ZodNever && this._def.unknownKeys === "strip")) {
@@ -2465,7 +2465,7 @@ var ZodObject = class _ZodObject extends ZodType {
             code: ZodIssueCode.unrecognized_keys,
             keys: extraKeys
           });
-          status.dirty();
+          status2.dirty();
         }
       } else if (unknownKeys === "strip") {
       } else {
@@ -2499,10 +2499,10 @@ var ZodObject = class _ZodObject extends ZodType {
         }
         return syncPairs;
       }).then((syncPairs) => {
-        return ParseStatus.mergeObjectSync(status, syncPairs);
+        return ParseStatus.mergeObjectSync(status2, syncPairs);
       });
     } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
+      return ParseStatus.mergeObjectSync(status2, pairs);
     }
   }
   get shape() {
@@ -2980,7 +2980,7 @@ function mergeValues(a, b) {
 }
 var ZodIntersection = class extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     const handleParsed = (parsedLeft, parsedRight) => {
       if (isAborted(parsedLeft) || isAborted(parsedRight)) {
         return INVALID;
@@ -2993,9 +2993,9 @@ var ZodIntersection = class extends ZodType {
         return INVALID;
       }
       if (isDirty(parsedLeft) || isDirty(parsedRight)) {
-        status.dirty();
+        status2.dirty();
       }
-      return { status: status.value, value: merged.data };
+      return { status: status2.value, value: merged.data };
     };
     if (ctx.common.async) {
       return Promise.all([
@@ -3033,7 +3033,7 @@ ZodIntersection.create = (left, right, params) => {
 };
 var ZodTuple = class _ZodTuple extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.array) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -3061,7 +3061,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         exact: false,
         type: "array"
       });
-      status.dirty();
+      status2.dirty();
     }
     const items = [...ctx.data].map((item, itemIndex) => {
       const schema = this._def.items[itemIndex] || this._def.rest;
@@ -3071,10 +3071,10 @@ var ZodTuple = class _ZodTuple extends ZodType {
     }).filter((x) => !!x);
     if (ctx.common.async) {
       return Promise.all(items).then((results) => {
-        return ParseStatus.mergeArray(status, results);
+        return ParseStatus.mergeArray(status2, results);
       });
     } else {
-      return ParseStatus.mergeArray(status, items);
+      return ParseStatus.mergeArray(status2, items);
     }
   }
   get items() {
@@ -3106,7 +3106,7 @@ var ZodRecord = class _ZodRecord extends ZodType {
     return this._def.valueType;
   }
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.object) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -3126,9 +3126,9 @@ var ZodRecord = class _ZodRecord extends ZodType {
       });
     }
     if (ctx.common.async) {
-      return ParseStatus.mergeObjectAsync(status, pairs);
+      return ParseStatus.mergeObjectAsync(status2, pairs);
     } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
+      return ParseStatus.mergeObjectSync(status2, pairs);
     }
   }
   get element() {
@@ -3159,7 +3159,7 @@ var ZodMap = class extends ZodType {
     return this._def.valueType;
   }
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.map) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -3186,11 +3186,11 @@ var ZodMap = class extends ZodType {
             return INVALID;
           }
           if (key.status === "dirty" || value.status === "dirty") {
-            status.dirty();
+            status2.dirty();
           }
           finalMap.set(key.value, value.value);
         }
-        return { status: status.value, value: finalMap };
+        return { status: status2.value, value: finalMap };
       });
     } else {
       const finalMap = /* @__PURE__ */ new Map();
@@ -3201,11 +3201,11 @@ var ZodMap = class extends ZodType {
           return INVALID;
         }
         if (key.status === "dirty" || value.status === "dirty") {
-          status.dirty();
+          status2.dirty();
         }
         finalMap.set(key.value, value.value);
       }
-      return { status: status.value, value: finalMap };
+      return { status: status2.value, value: finalMap };
     }
   }
 };
@@ -3219,7 +3219,7 @@ ZodMap.create = (keyType, valueType, params) => {
 };
 var ZodSet = class _ZodSet extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.parsedType !== ZodParsedType.set) {
       addIssueToContext(ctx, {
         code: ZodIssueCode.invalid_type,
@@ -3239,7 +3239,7 @@ var ZodSet = class _ZodSet extends ZodType {
           exact: false,
           message: def.minSize.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     if (def.maxSize !== null) {
@@ -3252,7 +3252,7 @@ var ZodSet = class _ZodSet extends ZodType {
           exact: false,
           message: def.maxSize.message
         });
-        status.dirty();
+        status2.dirty();
       }
     }
     const valueType = this._def.valueType;
@@ -3262,10 +3262,10 @@ var ZodSet = class _ZodSet extends ZodType {
         if (element.status === "aborted")
           return INVALID;
         if (element.status === "dirty")
-          status.dirty();
+          status2.dirty();
         parsedSet.add(element.value);
       }
-      return { status: status.value, value: parsedSet };
+      return { status: status2.value, value: parsedSet };
     }
     const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
     if (ctx.common.async) {
@@ -3596,15 +3596,15 @@ var ZodEffects = class extends ZodType {
     return this._def.schema._def.typeName === ZodFirstPartyTypeKind.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
   }
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     const effect = this._def.effect || null;
     const checkCtx = {
       addIssue: (arg) => {
         addIssueToContext(ctx, arg);
         if (arg.fatal) {
-          status.abort();
+          status2.abort();
         } else {
-          status.dirty();
+          status2.dirty();
         }
       },
       get path() {
@@ -3616,7 +3616,7 @@ var ZodEffects = class extends ZodType {
       const processed = effect.transform(ctx.data, checkCtx);
       if (ctx.common.async) {
         return Promise.resolve(processed).then(async (processed2) => {
-          if (status.value === "aborted")
+          if (status2.value === "aborted")
             return INVALID;
           const result = await this._def.schema._parseAsync({
             data: processed2,
@@ -3627,12 +3627,12 @@ var ZodEffects = class extends ZodType {
             return INVALID;
           if (result.status === "dirty")
             return DIRTY(result.value);
-          if (status.value === "dirty")
+          if (status2.value === "dirty")
             return DIRTY(result.value);
           return result;
         });
       } else {
-        if (status.value === "aborted")
+        if (status2.value === "aborted")
           return INVALID;
         const result = this._def.schema._parseSync({
           data: processed,
@@ -3643,7 +3643,7 @@ var ZodEffects = class extends ZodType {
           return INVALID;
         if (result.status === "dirty")
           return DIRTY(result.value);
-        if (status.value === "dirty")
+        if (status2.value === "dirty")
           return DIRTY(result.value);
         return result;
       }
@@ -3668,17 +3668,17 @@ var ZodEffects = class extends ZodType {
         if (inner.status === "aborted")
           return INVALID;
         if (inner.status === "dirty")
-          status.dirty();
+          status2.dirty();
         executeRefinement(inner.value);
-        return { status: status.value, value: inner.value };
+        return { status: status2.value, value: inner.value };
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
           if (inner.status === "aborted")
             return INVALID;
           if (inner.status === "dirty")
-            status.dirty();
+            status2.dirty();
           return executeRefinement(inner.value).then(() => {
-            return { status: status.value, value: inner.value };
+            return { status: status2.value, value: inner.value };
           });
         });
       }
@@ -3696,13 +3696,13 @@ var ZodEffects = class extends ZodType {
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
         }
-        return { status: status.value, value: result };
+        return { status: status2.value, value: result };
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
           if (!isValid(base))
             return INVALID;
           return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
-            status: status.value,
+            status: status2.value,
             value: result
           }));
         });
@@ -3881,7 +3881,7 @@ var ZodBranded = class extends ZodType {
 };
 var ZodPipeline = class _ZodPipeline extends ZodType {
   _parse(input) {
-    const { status, ctx } = this._processInputParams(input);
+    const { status: status2, ctx } = this._processInputParams(input);
     if (ctx.common.async) {
       const handleAsync = async () => {
         const inResult = await this._def.in._parseAsync({
@@ -3892,7 +3892,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
         if (inResult.status === "aborted")
           return INVALID;
         if (inResult.status === "dirty") {
-          status.dirty();
+          status2.dirty();
           return DIRTY(inResult.value);
         } else {
           return this._def.out._parseAsync({
@@ -3912,7 +3912,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
       if (inResult.status === "aborted")
         return INVALID;
       if (inResult.status === "dirty") {
-        status.dirty();
+        status2.dirty();
         return {
           status: "dirty",
           value: inResult.value
@@ -4222,6 +4222,8 @@ var RULES = [
   { kind: "google_api_key", re: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
   { kind: "stripe_key", re: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{10,}/g },
   { kind: "npm_token", re: /\bnpm_[A-Za-z0-9]{30,}/g },
+  // Reconnect device tokens: "rcd_" + 43 base64url characters (SPEC F15).
+  { kind: "reconnect_device_token", re: /\brcd_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g },
   {
     kind: "azure_storage_key",
     re: /\b(AccountKey\s*=\s*)[^;\s"']+/gi,
@@ -4482,24 +4484,85 @@ var ModelSettingsViewSchema = external_exports.object({
   lastCheckedAt: iso3.nullable()
 });
 
+// ../shared/dist/esm/devices.js
+var DEVICE_NAME_MAX = 80;
+var DEFAULT_DEVICE_NAME = "Computer";
+var PKCE_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/;
+var LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|\[::1\]|localhost):([1-9][0-9]{3,4})\/callback$/;
+function isLoopbackRedirect(uri) {
+  if (typeof uri !== "string")
+    return false;
+  const m = LOOPBACK.exec(uri);
+  if (!m)
+    return false;
+  const port = Number(m[1]);
+  return port >= 1024 && port <= 65535;
+}
+function cleanDeviceName(name) {
+  const oneLine = redact(name.replace(/[\u0000-\u001f\u007f]+/g, " ").trim());
+  return (oneLine || DEFAULT_DEVICE_NAME).slice(0, DEVICE_NAME_MAX).trim() || DEFAULT_DEVICE_NAME;
+}
+var DeviceDtoSchema = external_exports.object({
+  id: external_exports.string(),
+  name: external_exports.string(),
+  createdAt: external_exports.string(),
+  lastUsedAt: external_exports.string().nullable()
+});
+var DeviceListSchema = external_exports.array(DeviceDtoSchema);
+var DeviceApproveRequestSchema = external_exports.object({
+  redirectUri: external_exports.string().max(300).refine(isLoopbackRedirect, "Not a loopback redirect address"),
+  codeChallenge: external_exports.string().regex(PKCE_PATTERN, "Invalid code challenge"),
+  codeChallengeMethod: external_exports.literal("S256"),
+  state: external_exports.string().min(8).max(200),
+  deviceName: external_exports.string().max(500).transform(cleanDeviceName)
+}).strict();
+var DeviceApproveResponseSchema = external_exports.object({ redirect: external_exports.string() });
+var DeviceTokenRequestSchema = external_exports.object({
+  code: external_exports.string().min(1).max(200),
+  codeVerifier: external_exports.string().regex(PKCE_PATTERN),
+  redirectUri: external_exports.string().max(300)
+}).strict();
+var DeviceTokenResponseSchema = external_exports.object({
+  token: external_exports.string(),
+  device: DeviceDtoSchema
+});
+
 // src/config.ts
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var DEFAULT_URL = "http://localhost:4317";
 var str = (v) => typeof v === "string" && v.trim() ? v.trim() : null;
-function loadConfig(env = process.env) {
-  const home = env.RECONNECT_HOME || join(homedir(), ".reconnect");
-  let file = {};
+var noSlash = (u) => u.replace(/\/+$/, "");
+var configFile = (home) => join(home, "config.json");
+var stateHome = (env = process.env) => env.RECONNECT_HOME || join(homedir(), ".reconnect");
+function readConfigFile(home) {
   try {
-    file = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+    const v = JSON.parse(readFileSync(configFile(home), "utf8"));
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
   } catch {
+    return {};
   }
+}
+function loadConfig(env = process.env) {
+  const home = stateHome(env);
+  const file = readConfigFile(home);
   const pluginUrl = str(env.CLAUDE_PLUGIN_OPTION_URL);
-  const url = str(env.RECONNECT_URL) ?? (pluginUrl && pluginUrl.replace(/\/+$/, "") !== DEFAULT_URL ? pluginUrl : null) ?? str(file.url) ?? pluginUrl ?? DEFAULT_URL;
+  const url = noSlash(
+    str(env.RECONNECT_URL) ?? (pluginUrl && noSlash(pluginUrl) !== DEFAULT_URL ? pluginUrl : null) ?? str(file.url) ?? pluginUrl ?? DEFAULT_URL
+  );
+  const tokens = [
+    ["env", str(env.RECONNECT_TOKEN)],
+    ["plugin", str(env.CLAUDE_PLUGIN_OPTION_TOKEN)],
+    ["file", str(file.token)]
+  ];
+  const [tokenSource, token] = tokens.find(([, t]) => t) ?? [null, null];
   return {
-    url: url.replace(/\/+$/, ""),
-    token: str(env.RECONNECT_TOKEN) ?? str(env.CLAUDE_PLUGIN_OPTION_TOKEN) ?? str(file.token),
+    url,
+    token,
+    tokenSource,
+    webUrl: noSlash(str(env.RECONNECT_WEB_URL) ?? str(file.webUrl) ?? url),
+    deviceId: str(file.deviceId),
     home
   };
 }
@@ -4544,6 +4607,178 @@ function readStdin(timeoutMs, stream = process.stdin) {
     stream.on("error", done);
   });
 }
+
+// src/commands/connect.ts
+import { spawn } from "node:child_process";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { hostname } from "node:os";
+var CONNECT_TIMEOUT_MS = 5 * 6e4;
+var HTTP_TIMEOUT_MS = 1e4;
+var MSG = {
+  timedOut: "Timed out. Run /reconnect:connect again.",
+  cancelled: "Not connected. You clicked Cancel.",
+  failed: "Could not connect this computer. Run /reconnect:connect again.",
+  pageOk: "Connected. You can close this tab and go back to Claude Code.",
+  otherToken: "Note: a token set by your organization or in the plugin settings is used before this one."
+};
+var b64url = (b) => b.toString("base64url");
+var sha = (s) => createHash("sha256").update(s).digest();
+var defaultDeviceName = (host = hostname()) => host.replace(/\.local$/i, "");
+function openBrowser(url, platform = process.platform) {
+  try {
+    const child = platform === "darwin" ? spawn("open", [url], { detached: true, stdio: "ignore" }) : platform === "win32" ? spawn("cmd", ["/c", "start", '""', `"${url}"`], {
+      detached: true,
+      stdio: "ignore",
+      windowsVerbatimArguments: true
+    }) : spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
+    child.on("error", () => void 0);
+    child.unref();
+  } catch {
+  }
+}
+function page(title, ok) {
+  const esc = title.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconnect</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#F4F5F7;color:#111827;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{background:#fff;border-radius:12px;padding:32px;max-width:440px;margin:16px;border-top:4px solid ${ok ? "#1D4ED8" : "#9A3412"}}
+h1{font-size:1.25rem;line-height:1.4;margin:0}
+p{margin:12px 0 0;color:#374151}
+</style></head>
+<body><main><h1>${esc}</h1><p>Reconnect</p></main></body></html>
+`;
+}
+function saveDevice(home, url, token, deviceId) {
+  mkdirSync(home, { recursive: true, mode: 448 });
+  chmodSync(home, 448);
+  const next = { ...readConfigFile(home), url, token, deviceId };
+  const file = configFile(home);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 384 });
+  chmodSync(tmp, 384);
+  renameSync(tmp, file);
+}
+async function healthy(apiUrl) {
+  try {
+    const res = await fetch(`${apiUrl}/health`, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+    await res.body?.cancel().catch(() => void 0);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+async function connect(opts, deps) {
+  const { cfg, out } = deps;
+  const apiUrl = (opts.url?.trim() || cfg.url).replace(/\/+$/, "");
+  const webUrl = opts.url?.trim() && cfg.webUrl === cfg.url ? apiUrl : cfg.webUrl;
+  const deviceName = opts.name?.trim() || defaultDeviceName();
+  if (!await healthy(apiUrl)) {
+    out(
+      `Cannot reach Reconnect at ${apiUrl}. Check that the server runs and the address is right, or run: reconnect connect --url <address>
+`
+    );
+    return 1;
+  }
+  const verifier = b64url(randomBytes(32));
+  const challenge = b64url(createHash("sha256").update(verifier).digest());
+  const state = b64url(randomBytes(16));
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
+  });
+  const port = server.address().port;
+  const redirectUri = `http://127.0.0.1:${port}/callback`;
+  let timer;
+  const outcome = await new Promise((resolve) => {
+    let done = false;
+    const finish = (res, o, html, status2 = 200) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (!res) return resolve(o);
+      res.writeHead(status2, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store"
+      });
+      res.end(html, () => resolve(o));
+    };
+    timer = setTimeout(
+      () => finish(null, { code: 1, message: MSG.timedOut }, ""),
+      deps.timeoutMs ?? CONNECT_TIMEOUT_MS
+    );
+    server.on("request", (req, res) => {
+      const u = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method !== "GET" || u.pathname !== "/callback" || done) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("Not found");
+        return;
+      }
+      const fail = (message) => finish(res, { code: 1, message }, page(MSG.failed, false), 400);
+      if (!timingSafeEqual(sha(u.searchParams.get("state") ?? ""), sha(state))) {
+        return fail(MSG.failed);
+      }
+      if (u.searchParams.get("error") === "access_denied") {
+        return finish(res, { code: 1, message: MSG.cancelled }, page(MSG.cancelled, false));
+      }
+      const code = u.searchParams.get("code");
+      if (!code) return fail(MSG.failed);
+      void (async () => {
+        try {
+          const r = await fetch(`${apiUrl}/devices/token`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ code, codeVerifier: verifier, redirectUri }),
+            signal: AbortSignal.timeout(HTTP_TIMEOUT_MS)
+          });
+          if (!r.ok) {
+            await r.body?.cancel().catch(() => void 0);
+            return fail(MSG.failed);
+          }
+          const body = DeviceTokenResponseSchema.parse(await r.json());
+          saveDevice(cfg.home, apiUrl, body.token, body.device.id);
+          finish(res, { code: 0, name: body.device.name }, page(MSG.pageOk, true));
+        } catch {
+          fail(MSG.failed);
+        }
+      })();
+    });
+    const q = new URLSearchParams({
+      redirect_uri: redirectUri,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      state,
+      device_name: deviceName
+    });
+    const link = `${webUrl}/connect?${q.toString()}`;
+    if (opts.open) {
+      out(`Opening your browser to connect this computer. If it does not open, go to: ${link}
+`);
+      (deps.openUrl ?? openBrowser)(link);
+    } else {
+      out(`To connect this computer, go to: ${link}
+`);
+    }
+  });
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(() => resolve()));
+  if (outcome.code === 1) {
+    out(outcome.message + "\n");
+    return 1;
+  }
+  const note = cfg.tokenSource === "env" || cfg.tokenSource === "plugin" ? ` ${MSG.otherToken}` : "";
+  out(`Connected as ${outcome.name}.${note}
+`);
+  return 0;
+}
+
+// src/commands/emit.ts
+import { existsSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // src/envelope.ts
 import { randomUUID } from "node:crypto";
@@ -4618,16 +4853,16 @@ function parseShortstat(s) {
   };
 }
 async function readGit(cwd, timeoutMs) {
-  const [branch, sha, stat, origin] = await Promise.all([
+  const [branch, sha2, stat, origin] = await Promise.all([
     git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], timeoutMs),
     git(cwd, ["rev-parse", "--short", "HEAD"], timeoutMs),
     git(cwd, ["diff", "--shortstat", "HEAD"], timeoutMs),
     git(cwd, ["remote", "get-url", "origin"], timeoutMs)
   ]);
-  if (branch === null && sha === null) return null;
+  if (branch === null && sha2 === null) return null;
   return {
     branch: branch && branch !== "HEAD" ? branch : null,
-    headSha: sha || null,
+    headSha: sha2 || null,
     ...parseShortstat(stat),
     repoRemote: remoteOf(origin)
   };
@@ -4670,15 +4905,15 @@ async function getText(cfg, path, timeoutMs) {
 }
 
 // src/log.ts
-import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync as mkdirSync2, renameSync as renameSync2, statSync } from "node:fs";
 import { join as join2 } from "node:path";
 var MAX_LOG = 1024 * 1024;
 function log(home, msg) {
   try {
-    mkdirSync(home, { recursive: true, mode: 448 });
+    mkdirSync2(home, { recursive: true, mode: 448 });
     const file = join2(home, "hooks.log");
     try {
-      if (statSync(file).size > MAX_LOG) renameSync(file, `${file}.1`);
+      if (statSync(file).size > MAX_LOG) renameSync2(file, `${file}.1`);
     } catch {
     }
     appendFileSync(file, `${(/* @__PURE__ */ new Date()).toISOString()} ${msg}
@@ -4690,13 +4925,13 @@ function log(home, msg) {
 // src/queue.ts
 import {
   appendFileSync as appendFileSync2,
-  mkdirSync as mkdirSync2,
+  mkdirSync as mkdirSync3,
   readdirSync,
   readFileSync as readFileSync2,
-  renameSync as renameSync2,
+  renameSync as renameSync3,
   statSync as statSync2,
   unlinkSync,
-  writeFileSync
+  writeFileSync as writeFileSync2
 } from "node:fs";
 import { join as join3 } from "node:path";
 var QUEUE_MAX_LINES = 5e3;
@@ -4705,7 +4940,7 @@ var FLUSH_BATCH = 50;
 var STALE_FLUSH_MS = 6e4;
 var queueFile = (home) => join3(home, "queue.jsonl");
 function ensureHome(home) {
-  mkdirSync2(home, { recursive: true, mode: 448 });
+  mkdirSync3(home, { recursive: true, mode: 448 });
 }
 function capLines(lines, maxLines = QUEUE_MAX_LINES, maxBytes = QUEUE_MAX_BYTES) {
   let kept = lines.slice(-maxLines);
@@ -4734,8 +4969,8 @@ function enqueue(home, item) {
     const lines = readLines(file);
     if (size > QUEUE_MAX_BYTES || lines.length > QUEUE_MAX_LINES) {
       const tmp = `${file}.${process.pid}.tmp`;
-      writeFileSync(tmp, capLines(lines).join("\n") + "\n", { mode: 384 });
-      renameSync2(tmp, file);
+      writeFileSync2(tmp, capLines(lines).join("\n") + "\n", { mode: 384 });
+      renameSync3(tmp, file);
     }
   }
 }
@@ -4753,14 +4988,14 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
     try {
       if (Date.now() - statSync2(p).mtimeMs <= STALE_FLUSH_MS) continue;
       const claim = `${mine}.stale`;
-      renameSync2(p, claim);
+      renameSync3(p, claim);
       claimed.push(...readLines(claim));
       unlinkSync(claim);
     } catch {
     }
   }
   try {
-    renameSync2(file, mine);
+    renameSync3(file, mine);
     claimed.push(...readLines(mine));
   } catch {
   }
@@ -4790,16 +5025,22 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
 // src/commands/emit.ts
 var NETWORK_TIMEOUT_MS = 2e3;
 var GIT_TIMEOUT_MS = 500;
+var TOKEN_REFUSED = "Token refused. Run /reconnect:connect.";
+var refusedMarker = (home) => join4(home, "token-refused");
 function makeSender(cfg, deadline) {
-  let told401 = false;
   return async (item) => {
     if (deadline.remaining() < 50) return false;
     const r = await postJson(cfg, "/events", item, deadline.cap(NETWORK_TIMEOUT_MS));
     if (r === "drop")
       log(cfg.home, `dropped event rejected by API: ${JSON.stringify(item).slice(0, 200)}`);
-    if (r === "unauthorized" && !told401) {
-      told401 = true;
-      log(cfg.home, `API at ${cfg.url} refused the token (401); event kept in the queue`);
+    try {
+      if (r === "unauthorized" && !existsSync(refusedMarker(cfg.home))) {
+        log(cfg.home, `${TOKEN_REFUSED} (API at ${cfg.url} answered 401; events stay queued)`);
+        writeFileSync3(refusedMarker(cfg.home), "", { mode: 384 });
+      } else if (r === "ok" && existsSync(refusedMarker(cfg.home))) {
+        unlinkSync2(refusedMarker(cfg.home));
+      }
+    } catch {
     }
     return r === "ok" || r === "drop";
   };
@@ -4841,14 +5082,14 @@ async function flush(cfg, out) {
 // src/commands/install.ts
 import {
   copyFileSync,
-  existsSync,
-  mkdirSync as mkdirSync3,
+  existsSync as existsSync2,
+  mkdirSync as mkdirSync4,
   readFileSync as readFileSync3,
-  renameSync as renameSync3,
-  writeFileSync as writeFileSync2
+  renameSync as renameSync4,
+  writeFileSync as writeFileSync4
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname, join as join4 } from "node:path";
+import { dirname, join as join5 } from "node:path";
 
 // src/hook-commands.ts
 function hookArgs() {
@@ -4860,7 +5101,7 @@ function hookArgs() {
 
 // src/commands/install.ts
 var PLUGIN_TIP = "Tip: the Claude Code plugin is easier and updates itself. See docs/HOOKS.md.\n";
-var settingsPath = () => join4(homedir2(), ".claude", "settings.json");
+var settingsPath = () => join5(homedir2(), ".claude", "settings.json");
 function wantedCommands(bin) {
   const out = {};
   for (const [event, list] of Object.entries(hookArgs()))
@@ -4888,7 +5129,7 @@ function mergeSettings(current, bin) {
   return changed ? next : null;
 }
 function readSettings(file, out, verb) {
-  if (!existsSync(file)) return {};
+  if (!existsSync2(file)) return {};
   try {
     return JSON.parse(readFileSync3(file, "utf8"));
   } catch {
@@ -4898,16 +5139,16 @@ function readSettings(file, out, verb) {
   }
 }
 function writeSettings(file, next, out) {
-  mkdirSync3(dirname(file), { recursive: true });
-  if (existsSync(file)) {
+  mkdirSync4(dirname(file), { recursive: true });
+  if (existsSync2(file)) {
     const backup = `${file}.bak-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}`;
     copyFileSync(file, backup);
     out(`Backup: ${backup}
 `);
   }
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync2(tmp, JSON.stringify(next, null, 2) + "\n");
-  renameSync3(tmp, file);
+  writeFileSync4(tmp, JSON.stringify(next, null, 2) + "\n");
+  renameSync4(tmp, file);
 }
 function install(bin, out, file = settingsPath()) {
   out(PLUGIN_TIP);
@@ -4923,6 +5164,60 @@ function install(bin, out, file = settingsPath()) {
   out(`Added Reconnect hooks to ${file}.
 `);
   return 0;
+}
+
+// src/commands/status.ts
+var TIMEOUT_MS = 5e3;
+var STATUS_PROBE_KEY = "__reconnect-status-check__";
+var NOT_CONNECTED = "Not connected. Run /reconnect:connect.";
+var SOURCE_TEXT = {
+  env: "RECONNECT_TOKEN in the environment (set by your organization or your shell)",
+  plugin: "the plugin settings",
+  file: "~/.reconnect/config.json (reconnect connect)"
+};
+async function get(url, token) {
+  try {
+    const res = await fetch(url, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      signal: AbortSignal.timeout(TIMEOUT_MS)
+    });
+    await res.body?.cancel().catch(() => void 0);
+    return res.status;
+  } catch {
+    return null;
+  }
+}
+async function status(cfg, out) {
+  out(`Reconnect address: ${cfg.url}
+`);
+  out(`Token from: ${cfg.tokenSource ? SOURCE_TEXT[cfg.tokenSource] : "none"}
+`);
+  if (cfg.deviceId) out(`Computer id: ${cfg.deviceId}
+`);
+  const health = await get(`${cfg.url}/health`);
+  if (health !== 200) {
+    out(`Server: cannot be reached${health ? ` (HTTP ${health})` : ""}.
+`);
+    out(`Token: not checked.
+`);
+    return 1;
+  }
+  out("Server: reachable.\n");
+  if (!cfg.token) {
+    out(`Token: ${NOT_CONNECTED}
+`);
+    return 1;
+  }
+  const s = await get(`${cfg.url}/lanes/${STATUS_PROBE_KEY}/card.md`, cfg.token);
+  if (s !== null && (s >= 200 && s < 300 || s === 404)) {
+    out("Token: works.\n");
+    return 0;
+  }
+  if (s === 401 || s === 403) out(`Token: ${NOT_CONNECTED}
+`);
+  else out(`Token: could not be checked${s ? ` (HTTP ${s})` : ""}.
+`);
+  return 1;
 }
 
 // src/commands/inject-card.ts
@@ -5006,12 +5301,12 @@ function uninstall(extraBin, out, file = settingsPath()) {
 }
 
 // src/plugin-guard.ts
-import { readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 var PLUGIN_ID = "reconnect@reconnect-plugins";
 var MAX_FILE_BYTES = 1024 * 1024;
-var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join5(homedir3(), ".claude");
+var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join6(homedir3(), ".claude");
 function readJson(file) {
   const text = readFileSync4(file, "utf8");
   if (text.length > MAX_FILE_BYTES) throw new Error("too big");
@@ -5027,11 +5322,11 @@ function hasReconnectKey(v, depth = 0) {
 function pluginActive(env = process.env) {
   try {
     const dir = claudeDir(env);
-    const installed = readJson(join5(dir, "plugins", "installed_plugins.json"));
+    const installed = readJson(join6(dir, "plugins", "installed_plugins.json"));
     if (!hasReconnectKey(installed?.plugins)) return false;
     let settings = {};
     try {
-      settings = readJson(join5(dir, "settings.json"));
+      settings = readJson(join6(dir, "settings.json"));
     } catch {
     }
     return settings?.enabledPlugins?.[PLUGIN_ID] !== false;
@@ -5042,7 +5337,7 @@ function pluginActive(env = process.env) {
 function skipLegacyRun(home, env = process.env) {
   if (env.CLAUDE_PLUGIN_ROOT || !pluginActive(env)) return false;
   const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const mark = join5(home, "legacy-skip.day");
+  const mark = join6(home, "legacy-skip.day");
   let last = "";
   try {
     last = readFileSync4(mark, "utf8").trim();
@@ -5054,7 +5349,7 @@ function skipLegacyRun(home, env = process.env) {
       'old settings hook skipped: the Reconnect plugin sends this event. Run "reconnect uninstall" once.'
     );
     try {
-      writeFileSync3(mark, day + "\n", { mode: 384 });
+      writeFileSync5(mark, day + "\n", { mode: 384 });
     } catch {
     }
   }
@@ -5074,6 +5369,9 @@ Commands:
                        The Claude Code plugin is easier and updates itself (docs/HOOKS.md).
   uninstall [--bin X]  Remove the hooks that install added from ~/.claude/settings.json.
   flush                Send queued events now.
+  connect [--url <url>] [--name <name>] [--no-open]
+                       Connect this computer: sign in in the browser, then save a device token.
+  status               Show the address, where the token comes from, and check both.
 `;
 function parseArgs(argv) {
   const [cmd, arg, val] = argv;
@@ -5084,8 +5382,21 @@ function parseArgs(argv) {
       return { name: "install", bin: arg === "--bin" && val ? val : "reconnect" };
     case "uninstall":
       return { name: "uninstall", ...arg === "--bin" && val ? { bin: val } : {} };
+    case "connect": {
+      const out = { name: "connect", open: true };
+      const rest = argv.slice(1);
+      for (let i = 0; i < rest.length; i++) {
+        const a = rest[i];
+        if (a === "--no-open") out.open = false;
+        else if (a === "--url" && rest[i + 1]) out.url = rest[++i];
+        else if (a === "--name" && rest[i + 1]) out.deviceName = rest[++i];
+        else return { name: "help" };
+      }
+      return out;
+    }
     case "inject-card":
     case "flush":
+    case "status":
       return { name: cmd };
     default:
       return { name: "help" };
@@ -5118,13 +5429,20 @@ async function main(argv) {
         return uninstall(cmd.bin, stdout);
       case "flush":
         return await flush(cfg, stdout);
+      case "connect":
+        return await connect(
+          { url: cmd.url, name: cmd.deviceName, open: cmd.open },
+          { cfg, out: stdout }
+        );
+      case "status":
+        return await status(cfg, stdout);
       default:
         process.stderr.write(USAGE);
         return 0;
     }
   } catch (err) {
     log(cfg.home, `${cmd.name} failed: ${err?.stack ?? String(err)}`);
-    return ["install", "uninstall", "flush"].includes(cmd.name) ? 1 : 0;
+    return ["install", "uninstall", "flush", "connect", "status"].includes(cmd.name) ? 1 : 0;
   }
 }
 
