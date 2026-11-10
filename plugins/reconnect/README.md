@@ -37,6 +37,14 @@ one time with `RECONNECT_URL=<address> claude` before you type `/reconnect:conne
 To check the connection, type `/reconnect:status`. To remove this computer, open Reconnect >
 Settings > Connected computers.
 
+## What it sends
+
+On each hook event: the session id, the folder, the git branch and diff counts, and a few hook
+fields. When a session or a subagent stops, and before a compact, it also sends the end of the
+transcript (at most 24 000 characters). Secrets in that text are replaced before it leaves your
+computer. The full transcript is never sent. To send no transcript text, set
+`RECONNECT_SEND_TRANSCRIPT_TAIL=off` in your environment.
+
 ## Update
 
 Updates come by themselves when auto-update is on. To turn it on: `/plugin` > Marketplaces >
