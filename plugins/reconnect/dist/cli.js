@@ -4100,99 +4100,6 @@ var DistilledCardSchema = external_exports.object({
   path: ["needsFromMe"]
 });
 
-// ../shared/dist/esm/events.js
-var HOOK_EVENTS = [
-  "SessionStart",
-  "Stop",
-  "SubagentStop",
-  "Notification",
-  "PreCompact",
-  "SessionEnd"
-];
-var LaneSourceSchema = external_exports.enum(["env", "branch_ticket", "branch", "cwd"]);
-var EventEnvelopeSchema = external_exports.object({
-  v: external_exports.literal(1),
-  eventId: external_exports.string().uuid(),
-  occurredAt: external_exports.string().datetime({ offset: true }),
-  hookEvent: external_exports.enum(HOOK_EVENTS),
-  sessionId: external_exports.string().min(1),
-  agentId: external_exports.string().min(1).nullable(),
-  transcriptPath: external_exports.string().min(1).nullable(),
-  cwd: external_exports.string().min(1),
-  lane: external_exports.object({ key: external_exports.string().min(1).max(200), source: LaneSourceSchema }),
-  git: external_exports.object({
-    branch: external_exports.string().nullable(),
-    headSha: external_exports.string().nullable(),
-    filesChanged: external_exports.number().int().nonnegative(),
-    insertions: external_exports.number().int().nonnegative(),
-    deletions: external_exports.number().int().nonnegative()
-  }).nullable(),
-  /**
-   * `origin` remote as `host/path` (e.g. `github.com/acme/clinic-app`), from `normalizeRemote`.
-   * Never holds a user, password or token. Older hooks do not send it.
-   */
-  repoRemote: external_exports.string().min(3).max(500).nullable().optional(),
-  /** Hook-specific fields, allowlisted per event. Never the transcript. */
-  detail: external_exports.record(external_exports.string(), external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean(), external_exports.null()]))
-});
-
-// ../shared/dist/esm/lane.js
-var TICKET_KEY_RE = /[A-Z][A-Z0-9]+-\d+/;
-function extractTicketKey(text) {
-  return text ? TICKET_KEY_RE.exec(text)?.[0] ?? null : null;
-}
-function resolveLane(h) {
-  const env = h.envLane?.trim();
-  if (env)
-    return { key: env.slice(0, 200), source: "env" };
-  const branch = h.branch?.trim();
-  if (branch && branch !== "HEAD") {
-    const ticket = extractTicketKey(branch);
-    if (ticket)
-      return { key: ticket, source: "branch_ticket" };
-    return { key: branch.slice(0, 200), source: "branch" };
-  }
-  const base = h.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || h.cwd || "unknown";
-  return { key: base.slice(0, 200), source: "cwd" };
-}
-var SEGMENT = /^[\w.~-]+$/;
-function normalizeRemote(raw) {
-  const s = raw?.trim();
-  if (!s || /\s/.test(s))
-    return null;
-  let host;
-  let path;
-  const scp = /^(?:[^@/:]+@)?([^@/:]+):(?!\/\/)(.+)$/.exec(s);
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
-    let u;
-    try {
-      u = new URL(s);
-    } catch {
-      return null;
-    }
-    const proto = u.protocol.toLowerCase();
-    if (proto === "https:" || proto === "http:")
-      host = u.host;
-    else if (proto === "ssh:" || proto === "git+ssh:" || proto === "git:")
-      host = u.hostname;
-    else
-      return null;
-    path = decodeURIComponent(u.pathname);
-  } else if (scp) {
-    host = scp[1];
-    path = scp[2];
-  } else {
-    return null;
-  }
-  host = host.toLowerCase();
-  if (!host || !/^[a-z0-9.-]+(:\d+)?$/.test(host))
-    return null;
-  const parts = path.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").split("/");
-  if (parts.length < 2 || parts.some((p) => !SEGMENT.test(p) || p === "." || p === ".."))
-    return null;
-  return { host, path: parts.join("/") };
-}
-
 // ../shared/dist/esm/redact.js
 var redacted = (kind) => `[REDACTED:${kind}]`;
 var RULES = [
@@ -4258,6 +4165,159 @@ function redact(text) {
   for (const r of RULES)
     out = out.replace(r.re, r.with ?? redacted(r.kind));
   return out;
+}
+
+// ../shared/dist/esm/transcript.js
+var CHARS_PER_TOKEN = 4;
+var TRANSCRIPT_TAIL_MAX_CHARS = 6e3 * CHARS_PER_TOKEN;
+var TRANSCRIPT_READ_FACTOR = 4;
+var MAX_TOOL_TEXT = 1e3;
+var clip = (s, n) => s.length > n ? `${s.slice(0, n)} \u2026[${s.length - n} chars cut]` : s;
+function toolResultText(content) {
+  if (typeof content === "string")
+    return content;
+  if (Array.isArray(content)) {
+    return content.map((c) => typeof c?.text === "string" ? c.text : "").filter(Boolean).join("\n");
+  }
+  return "";
+}
+function renderEntry(e) {
+  const role = e.message?.role ?? e.type;
+  if (role !== "user" && role !== "assistant")
+    return [];
+  const content = e.message?.content;
+  if (typeof content === "string")
+    return content.trim() ? [`${role}: ${content}`] : [];
+  if (!Array.isArray(content))
+    return [];
+  const out = [];
+  for (const b of content) {
+    if (b?.type === "text" && typeof b.text === "string" && b.text.trim())
+      out.push(`${role}: ${b.text}`);
+    else if (b?.type === "tool_use")
+      out.push(`[tool_use ${String(b.name ?? "tool")}]`);
+    else if (b?.type === "tool_result") {
+      const t = toolResultText(b.content).trim();
+      out.push(`[tool_result] ${clip(t, MAX_TOOL_TEXT)}`);
+    }
+  }
+  return out;
+}
+function renderTranscript(jsonl) {
+  const lines = [];
+  for (const raw of jsonl.split("\n")) {
+    if (!raw.trim())
+      continue;
+    try {
+      lines.push(...renderEntry(JSON.parse(raw)));
+    } catch {
+    }
+  }
+  return lines.join("\n");
+}
+function renderTranscriptTail(jsonl, maxChars, partial) {
+  const text = partial ? jsonl.slice(jsonl.indexOf("\n") + 1) : jsonl;
+  const rendered = redact(renderTranscript(text));
+  return rendered.length > maxChars ? rendered.slice(rendered.length - maxChars) : rendered;
+}
+
+// ../shared/dist/esm/events.js
+var HOOK_EVENTS = [
+  "SessionStart",
+  "Stop",
+  "SubagentStop",
+  "Notification",
+  "PreCompact",
+  "SessionEnd"
+];
+var LaneSourceSchema = external_exports.enum(["env", "branch_ticket", "branch", "cwd"]);
+var EventEnvelopeSchema = external_exports.object({
+  v: external_exports.literal(1),
+  eventId: external_exports.string().uuid(),
+  occurredAt: external_exports.string().datetime({ offset: true }),
+  hookEvent: external_exports.enum(HOOK_EVENTS),
+  sessionId: external_exports.string().min(1),
+  agentId: external_exports.string().min(1).nullable(),
+  transcriptPath: external_exports.string().min(1).nullable(),
+  cwd: external_exports.string().min(1),
+  lane: external_exports.object({ key: external_exports.string().min(1).max(200), source: LaneSourceSchema }),
+  git: external_exports.object({
+    branch: external_exports.string().nullable(),
+    headSha: external_exports.string().nullable(),
+    filesChanged: external_exports.number().int().nonnegative(),
+    insertions: external_exports.number().int().nonnegative(),
+    deletions: external_exports.number().int().nonnegative()
+  }).nullable(),
+  /**
+   * `origin` remote as `host/path` (e.g. `github.com/acme/clinic-app`), from `normalizeRemote`.
+   * Never holds a user, password or token. Older hooks do not send it.
+   */
+  repoRemote: external_exports.string().min(3).max(500).nullable().optional(),
+  /**
+   * Redacted, rendered end of the transcript (max TRANSCRIPT_TAIL_MAX_CHARS), so a remote API can
+   * distill without the file (user decision 2026-11-10). Hooks send it only on Stop, SubagentStop
+   * and PreCompact; `null` = the file could not be read. Older hooks do not send it.
+   */
+  transcriptTail: external_exports.string().max(TRANSCRIPT_TAIL_MAX_CHARS).nullable().optional(),
+  /** Hook-specific fields, allowlisted per event. Never the transcript. */
+  detail: external_exports.record(external_exports.string(), external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean(), external_exports.null()]))
+});
+
+// ../shared/dist/esm/lane.js
+var TICKET_KEY_RE = /[A-Z][A-Z0-9]+-\d+/;
+function extractTicketKey(text) {
+  return text ? TICKET_KEY_RE.exec(text)?.[0] ?? null : null;
+}
+function resolveLane(h) {
+  const env = h.envLane?.trim();
+  if (env)
+    return { key: env.slice(0, 200), source: "env" };
+  const branch = h.branch?.trim();
+  if (branch && branch !== "HEAD") {
+    const ticket = extractTicketKey(branch);
+    if (ticket)
+      return { key: ticket, source: "branch_ticket" };
+    return { key: branch.slice(0, 200), source: "branch" };
+  }
+  const base = h.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || h.cwd || "unknown";
+  return { key: base.slice(0, 200), source: "cwd" };
+}
+var SEGMENT = /^[\w.~-]+$/;
+function normalizeRemote(raw) {
+  const s = raw?.trim();
+  if (!s || /\s/.test(s))
+    return null;
+  let host;
+  let path;
+  const scp = /^(?:[^@/:]+@)?([^@/:]+):(?!\/\/)(.+)$/.exec(s);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+    let u;
+    try {
+      u = new URL(s);
+    } catch {
+      return null;
+    }
+    const proto = u.protocol.toLowerCase();
+    if (proto === "https:" || proto === "http:")
+      host = u.host;
+    else if (proto === "ssh:" || proto === "git+ssh:" || proto === "git:")
+      host = u.hostname;
+    else
+      return null;
+    path = decodeURIComponent(u.pathname);
+  } else if (scp) {
+    host = scp[1];
+    path = scp[2];
+  } else {
+    return null;
+  }
+  host = host.toLowerCase();
+  if (!host || !/^[a-z0-9.-]+(:\d+)?$/.test(host))
+    return null;
+  const parts = path.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").split("/");
+  if (parts.length < 2 || parts.some((p) => !SEGMENT.test(p) || p === "." || p === ".."))
+    return null;
+  return { host, path: parts.join("/") };
 }
 
 // ../shared/dist/esm/api.js
@@ -4563,7 +4623,8 @@ function loadConfig(env = process.env) {
     tokenSource,
     webUrl: noSlash(str(env.RECONNECT_WEB_URL) ?? str(file.webUrl) ?? url),
     deviceId: str(file.deviceId),
-    home
+    home,
+    sendTranscriptTail: (str(env.RECONNECT_SEND_TRANSCRIPT_TAIL) ?? str(file.sendTranscriptTail) ?? "on").toLowerCase() !== "off"
   };
 }
 
@@ -5022,9 +5083,45 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
   return ok && rest.length === 0;
 }
 
+// src/transcript-tail.ts
+import { open } from "node:fs/promises";
+var TAIL_EVENTS = ["Stop", "SubagentStop", "PreCompact"];
+var TAIL_READ_BYTES = TRANSCRIPT_TAIL_MAX_CHARS * TRANSCRIPT_READ_FACTOR;
+function tailPath(event, input) {
+  const v = event === "SubagentStop" ? input.agent_transcript_path : input.transcript_path;
+  return typeof v === "string" && v ? v : null;
+}
+async function readTail(path) {
+  if (!path) return null;
+  try {
+    const fh = await open(path, "r");
+    try {
+      const size = (await fh.stat()).size;
+      const want = Math.min(size, TAIL_READ_BYTES);
+      const buf = Buffer.alloc(want);
+      const { bytesRead } = await fh.read(buf, 0, want, size - want);
+      const text = buf.subarray(0, bytesRead).toString("utf8");
+      return renderTranscriptTail(text, TRANSCRIPT_TAIL_MAX_CHARS, want < size);
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+}
+function readTailWithin(path, timeoutMs) {
+  let timer;
+  const late2 = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+    timer.unref();
+  });
+  return Promise.race([readTail(path), late2]).finally(() => clearTimeout(timer));
+}
+
 // src/commands/emit.ts
 var NETWORK_TIMEOUT_MS = 2e3;
 var GIT_TIMEOUT_MS = 500;
+var TAIL_TIMEOUT_MS = 300;
 var TOKEN_REFUSED = "Token refused. Run /reconnect:connect.";
 var refusedMarker = (home) => join4(home, "token-refused");
 function makeSender(cfg, deadline) {
@@ -5059,6 +5156,12 @@ async function emit(event, rawInput, cfg, deadline, env = process.env) {
   if (!envelope) {
     log(cfg.home, `emit ${event}: no session_id, skipped`);
     return;
+  }
+  if (cfg.sendTranscriptTail && TAIL_EVENTS.includes(event)) {
+    envelope.transcriptTail = await readTailWithin(
+      tailPath(event, input),
+      deadline.cap(TAIL_TIMEOUT_MS)
+    );
   }
   const send = makeSender(cfg, deadline);
   const queueDrained = await flushQueue(cfg.home, send);
