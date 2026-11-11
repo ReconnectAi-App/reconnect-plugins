@@ -4427,6 +4427,15 @@ var ParkLaneSchema = external_exports.object({
 }).strict();
 var CloseLaneSchema = external_exports.object({ reason: external_exports.enum(CLOSE_REASONS).default("manual") }).strict();
 var iso = external_exports.string().datetime({ offset: true });
+var SUMMARY_STATUSES = ["updating", "failed", "off"];
+var SUMMARY_FAILURES = ["sign_in", "error"];
+var SummaryStatusSchema = external_exports.object({
+  status: external_exports.enum(SUMMARY_STATUSES),
+  /** updating: wait or run start; failed/off: time of the run that set it. */
+  since: iso,
+  /** Only for status 'failed'. Never the error text. */
+  reason: external_exports.enum(SUMMARY_FAILURES).optional()
+});
 var ContextRefSchema = external_exports.object({
   id: external_exports.string(),
   title: external_exports.string(),
@@ -4456,7 +4465,9 @@ var QueueItemSchema = external_exports.object({
   /** Newest session close time when sessionClosed, else null. */
   sessionClosedAt: iso.nullable(),
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
-  runtime: external_exports.enum(RUNTIMES).optional()
+  runtime: external_exports.enum(RUNTIMES).optional(),
+  /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
+  summaryStatus: SummaryStatusSchema.nullable().optional()
 });
 var QueueResponseSchema = external_exports.object({
   groups: external_exports.array(external_exports.object({
@@ -4553,7 +4564,9 @@ var LaneDetailSchema = external_exports.object({
   /** Newest session close time when sessionClosed, else null. */
   sessionClosedAt: iso.nullable(),
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
-  runtime: external_exports.enum(RUNTIMES).optional()
+  runtime: external_exports.enum(RUNTIMES).optional(),
+  /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
+  summaryStatus: SummaryStatusSchema.nullable().optional()
 });
 
 // ../shared/dist/esm/sources.js
