@@ -4100,6 +4100,9 @@ var DistilledCardSchema = external_exports.object({
   path: ["needsFromMe"]
 });
 
+// ../shared/dist/esm/runtimes.js
+var RUNTIMES = ["claude_code", "grok_build"];
+
 // ../shared/dist/esm/redact.js
 var redacted = (kind) => `[REDACTED:${kind}]`;
 var RULES = [
@@ -4230,10 +4233,79 @@ function renderTranscript(jsonl) {
   }
   return lines.join("\n");
 }
-function renderTranscriptTail(jsonl, maxChars, partial) {
+var meta = (v) => v && typeof v === "object" ? v : {};
+var textOf = (c) => {
+  const b = meta(c);
+  return b.type === "text" && typeof b.text === "string" ? b.text : "";
+};
+function grokToolText(content) {
+  if (!Array.isArray(content))
+    return "";
+  return content.map((c) => textOf(c) || textOf(c?.content)).filter(Boolean).join("\n");
+}
+function grokBlocks(jsonl) {
+  const out = [];
+  let open2 = null;
+  for (const raw of jsonl.split("\n")) {
+    if (!raw.trim())
+      continue;
+    let line;
+    try {
+      line = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (line?.method !== "session/update")
+      continue;
+    const u = line.params?.update;
+    const kind = u?.sessionUpdate;
+    if (kind === "user_message_chunk" || kind === "agent_message_chunk") {
+      const role = kind === "user_message_chunk" ? "user" : "assistant";
+      if (role === "user" && (meta(u?._meta).hostTurn || meta(meta(u?.content)._meta).bashCommand))
+        continue;
+      const text = textOf(u?.content);
+      if (!text)
+        continue;
+      if (open2 && open2.role === role)
+        open2.text += text;
+      else
+        out.push(open2 = { role, text });
+    } else if (kind === "tool_call") {
+      const name = typeof u?.title === "string" && u.title ? u.title : String(u?.kind ?? "tool");
+      out.push({ role: "tool", text: `[tool_use ${name}]` });
+      open2 = null;
+    } else if (kind === "tool_call_update") {
+      const t = grokToolText(u?.content).trim();
+      if (t && (u?.status === "completed" || u?.status === "failed"))
+        out.push({ role: "tool", text: `[tool_result] ${clip(t, MAX_TOOL_TEXT)}` });
+      open2 = null;
+    } else if (kind !== "agent_thought_chunk") {
+      open2 = null;
+    }
+  }
+  return out;
+}
+var blockLine = (b) => b.role === "tool" ? b.text : `${b.role}: ${b.text}`;
+function renderGrokTranscript(jsonl, lastAssistantMessage) {
+  const blocks = grokBlocks(jsonl).filter((b) => b.text.trim());
+  const last = lastAssistantMessage?.trim() ? lastAssistantMessage : null;
+  if (last) {
+    const tail = blocks[blocks.length - 1];
+    if (tail?.role === "assistant" && last.startsWith(tail.text))
+      tail.text = last;
+    else
+      blocks.push({ role: "assistant", text: last });
+  }
+  return blocks.map(blockLine).join("\n");
+}
+function capRedacted(text, maxChars) {
+  const r = redact(text);
+  return r.length > maxChars ? r.slice(r.length - maxChars) : r;
+}
+function renderTranscriptTail(jsonl, maxChars, partial, opts = {}) {
   const text = partial ? jsonl.slice(jsonl.indexOf("\n") + 1) : jsonl;
-  const rendered = redact(renderTranscript(text));
-  return rendered.length > maxChars ? rendered.slice(rendered.length - maxChars) : rendered;
+  const rendered = opts.runtime === "grok_build" ? renderGrokTranscript(text, opts.lastAssistantMessage) : renderTranscript(text);
+  return capRedacted(rendered, maxChars);
 }
 
 // ../shared/dist/esm/events.js
@@ -4251,6 +4323,8 @@ var EventEnvelopeSchema = external_exports.object({
   eventId: external_exports.string().uuid(),
   occurredAt: external_exports.string().datetime({ offset: true }),
   hookEvent: external_exports.enum(HOOK_EVENTS),
+  /** Coding agent that sent the event. Missing = `claude_code` (hooks before 1.4.0). */
+  runtime: external_exports.enum(RUNTIMES).optional(),
   sessionId: external_exports.string().min(1),
   agentId: external_exports.string().min(1).nullable(),
   transcriptPath: external_exports.string().min(1).nullable(),
@@ -4380,7 +4454,9 @@ var QueueItemSchema = external_exports.object({
   /** The lane has Claude Code sessions and all of them are closed (SessionEnd). */
   sessionClosed: external_exports.boolean(),
   /** Newest session close time when sessionClosed, else null. */
-  sessionClosedAt: iso.nullable()
+  sessionClosedAt: iso.nullable(),
+  /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
+  runtime: external_exports.enum(RUNTIMES).optional()
 });
 var QueueResponseSchema = external_exports.object({
   groups: external_exports.array(external_exports.object({
@@ -4426,7 +4502,9 @@ var LaneProcessSchema = external_exports.object({
   endedAt: iso.nullable(),
   running: external_exports.boolean(),
   /** Shell command that resumes the session. null for subagents and humans. */
-  resumeCommand: external_exports.string().nullable()
+  resumeCommand: external_exports.string().nullable(),
+  /** Coding agent of this process. Missing = Claude Code (older API). */
+  runtime: external_exports.enum(RUNTIMES).optional()
 });
 var LaneDocSchema = external_exports.object({
   id: external_exports.string(),
@@ -4473,7 +4551,9 @@ var LaneDetailSchema = external_exports.object({
   /** The lane has Claude Code sessions and all of them are closed (SessionEnd). */
   sessionClosed: external_exports.boolean(),
   /** Newest session close time when sessionClosed, else null. */
-  sessionClosedAt: iso.nullable()
+  sessionClosedAt: iso.nullable(),
+  /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
+  runtime: external_exports.enum(RUNTIMES).optional()
 });
 
 // ../shared/dist/esm/sources.js
@@ -5004,6 +5084,7 @@ async function connect(opts, deps) {
 }
 
 // src/commands/emit.ts
+import { spawn as spawn2 } from "node:child_process";
 import { existsSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
 
@@ -5040,6 +5121,7 @@ function buildEnvelope(a) {
     eventId: (a.uuid ?? randomUUID)(),
     occurredAt: (a.now ?? /* @__PURE__ */ new Date()).toISOString(),
     hookEvent: a.event,
+    runtime: a.runtime ?? "claude_code",
     sessionId,
     agentId,
     transcriptPath: str2(a.input.transcript_path),
@@ -5249,6 +5331,60 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
   return ok && rest.length === 0;
 }
 
+// src/runtime.ts
+var isGrokEnv = (env) => !!(env.GROK_HOOK_EVENT || env.GROK_SESSION_ID);
+var str3 = (v) => typeof v === "string" && v.length > 0 ? v : null;
+var has = (o, k) => o[k] !== void 0 && o[k] !== null;
+var GROK_START_SOURCE = { new: "startup", load: "resume" };
+function normalizeHookInput(raw, env, event) {
+  const camelOnly = (has(raw, "sessionId") || has(raw, "hookEventName")) && !has(raw, "session_id");
+  if (!isGrokEnv(env) && !camelOnly)
+    return { runtime: "claude_code", input: raw, lastAssistantMessage: null, skip: null };
+  const input = {
+    session_id: str3(raw.sessionId) ?? str3(raw.session_id) ?? void 0,
+    cwd: str3(raw.cwd) ?? str3(raw.workspaceRoot) ?? void 0,
+    transcript_path: str3(raw.transcriptPath) ?? str3(raw.transcript_path) ?? void 0,
+    hook_event_name: raw.hook_event_name
+  };
+  const set = (k, v) => {
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") input[k] = v;
+  };
+  switch (event) {
+    case "SessionStart": {
+      const s = str3(raw.source);
+      set("source", s ? GROK_START_SOURCE[s] ?? s : void 0);
+      break;
+    }
+    case "Stop":
+    case "SubagentStop":
+      set("stop_hook_active", raw.stopHookActive ?? raw.stop_hook_active);
+      break;
+    case "Notification":
+      set("message", raw.message);
+      set("notification_type", raw.notificationType ?? raw.notification_type);
+      break;
+    case "PreCompact":
+      set("trigger", raw.source ?? raw.trigger);
+      break;
+    case "SessionEnd":
+      set("reason", raw.reason);
+      break;
+  }
+  return {
+    runtime: "grok_build",
+    input,
+    lastAssistantMessage: str3(raw.lastAssistantMessage),
+    skip: grokSkip(event, raw)
+  };
+}
+function grokSkip(event, raw) {
+  if (event === "Stop" && str3(raw.reason) && raw.reason !== "end_turn")
+    return `Stop with reason ${JSON.stringify(String(raw.reason).slice(0, 40))}`;
+  if (event === "SubagentStop") return "SubagentStop (Grok Build subagents are not captured)";
+  if (event === "SessionEnd" && str3(raw.subagentType)) return "SessionEnd of a subagent";
+  return null;
+}
+
 // src/transcript-tail.ts
 import { open } from "node:fs/promises";
 var TAIL_EVENTS = ["Stop", "SubagentStop", "PreCompact"];
@@ -5257,7 +5393,7 @@ function tailPath(event, input) {
   const v = event === "SubagentStop" ? input.agent_transcript_path : input.transcript_path;
   return typeof v === "string" && v ? v : null;
 }
-async function readTail(path) {
+async function readTail(path, opts = {}) {
   if (!path) return null;
   try {
     const fh = await open(path, "r");
@@ -5267,7 +5403,7 @@ async function readTail(path) {
       const buf = Buffer.alloc(want);
       const { bytesRead } = await fh.read(buf, 0, want, size - want);
       const text = buf.subarray(0, bytesRead).toString("utf8");
-      return renderTranscriptTail(text, TRANSCRIPT_TAIL_MAX_CHARS, want < size);
+      return renderTranscriptTail(text, TRANSCRIPT_TAIL_MAX_CHARS, want < size, opts);
     } finally {
       await fh.close();
     }
@@ -5275,19 +5411,20 @@ async function readTail(path) {
     return null;
   }
 }
-function readTailWithin(path, timeoutMs) {
+function readTailWithin(path, timeoutMs, opts = {}) {
   let timer;
   const late2 = new Promise((resolve) => {
     timer = setTimeout(() => resolve(null), timeoutMs);
     timer.unref();
   });
-  return Promise.race([readTail(path), late2]).finally(() => clearTimeout(timer));
+  return Promise.race([readTail(path, opts), late2]).finally(() => clearTimeout(timer));
 }
 
 // src/commands/emit.ts
 var NETWORK_TIMEOUT_MS = 2e3;
 var GIT_TIMEOUT_MS = 500;
 var TAIL_TIMEOUT_MS = 300;
+var QUICK_GIT_TIMEOUT_MS = 300;
 var TOKEN_REFUSED = "Token refused. Run /reconnect:connect.";
 var refusedMarker = (home) => join4(home, "token-refused");
 function makeSender(cfg, deadline) {
@@ -5308,26 +5445,58 @@ function makeSender(cfg, deadline) {
     return r === "ok" || r === "drop";
   };
 }
-async function emit(event, rawInput, cfg, deadline, env = process.env) {
-  let input;
+function startBackgroundFlush(cliPath, home) {
   try {
-    input = JSON.parse(rawInput || "{}");
+    spawn2(process.execPath, [cliPath, "flush"], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    }).on("error", () => void 0).unref();
+  } catch (err) {
+    log(home, `background flush did not start: ${err?.message ?? String(err)}`);
+  }
+}
+async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}) {
+  let raw;
+  try {
+    raw = JSON.parse(rawInput || "{}");
   } catch {
     log(cfg.home, `emit ${event}: stdin is not JSON`);
     return;
   }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
+  const { runtime, input, lastAssistantMessage, skip } = normalizeHookInput(raw, env, event);
+  if (skip) return;
+  const queueOnly = runtime === "grok_build" && event === "SessionEnd";
   const cwd = typeof input.cwd === "string" && input.cwd ? input.cwd : process.cwd();
-  const git2 = await readGit(cwd, deadline.cap(GIT_TIMEOUT_MS));
-  const envelope = buildEnvelope({ event, input, git: git2, envLane: env.LANE, fallbackCwd: cwd });
+  const git2 = await readGit(cwd, deadline.cap(queueOnly ? QUICK_GIT_TIMEOUT_MS : GIT_TIMEOUT_MS));
+  const envelope = buildEnvelope({
+    event,
+    input,
+    git: git2,
+    envLane: env.LANE,
+    fallbackCwd: cwd,
+    runtime
+  });
   if (!envelope) {
     log(cfg.home, `emit ${event}: no session_id, skipped`);
+    return;
+  }
+  if (queueOnly) {
+    enqueue(cfg.home, envelope);
+    if (opts.cliPath) startBackgroundFlush(opts.cliPath, cfg.home);
     return;
   }
   if (cfg.sendTranscriptTail && TAIL_EVENTS.includes(event)) {
     envelope.transcriptTail = await readTailWithin(
       tailPath(event, input),
-      deadline.cap(TAIL_TIMEOUT_MS)
+      deadline.cap(TAIL_TIMEOUT_MS),
+      { runtime, lastAssistantMessage }
     );
+    if (runtime === "grok_build" && envelope.transcriptTail === null) {
+      log(cfg.home, `emit ${event}: Grok Build session file not readable, sent the last answer`);
+      envelope.transcriptTail = lastAssistantMessage ? capRedacted(`assistant: ${lastAssistantMessage}`, TRANSCRIPT_TAIL_MAX_CHARS) : null;
+    }
   }
   const send = makeSender(cfg, deadline);
   const queueDrained = await flushQueue(cfg.home, send);
@@ -5576,6 +5745,7 @@ import { join as join6 } from "node:path";
 var PLUGIN_ID = "reconnect@reconnect-plugins";
 var MAX_FILE_BYTES = 1024 * 1024;
 var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join6(homedir3(), ".claude");
+var grokHome = (env) => env.GROK_HOME || join6(homedir3(), ".grok");
 function readJson(file) {
   const text = readFileSync4(file, "utf8");
   if (text.length > MAX_FILE_BYTES) throw new Error("too big");
@@ -5587,6 +5757,16 @@ function hasReconnectKey(v, depth = 0) {
   return Object.entries(v).some(
     ([k, x]) => k.startsWith("reconnect@") || hasReconnectKey(x, depth + 1)
   );
+}
+function grokPluginInstalled(env = process.env) {
+  try {
+    const reg = readJson(join6(grokHome(env), "installed-plugins", "registry.json"));
+    return Object.values(reg?.repos ?? {}).some(
+      (r) => Object.keys(r?.plugins ?? {}).includes("reconnect")
+    );
+  } catch {
+    return false;
+  }
 }
 function pluginActive(env = process.env) {
   try {
@@ -5604,7 +5784,8 @@ function pluginActive(env = process.env) {
   }
 }
 function skipLegacyRun(home, env = process.env) {
-  if (env.CLAUDE_PLUGIN_ROOT || !pluginActive(env)) return false;
+  if (env.CLAUDE_PLUGIN_ROOT || env.GROK_PLUGIN_ROOT) return false;
+  if (!pluginActive(env) && !(isGrokEnv(env) && grokPluginInstalled(env))) return false;
   const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const mark = join6(home, "legacy-skip.day");
   let last = "";
@@ -5627,13 +5808,14 @@ function skipLegacyRun(home, env = process.env) {
 
 // src/main.ts
 var HOOK_BUDGET_MS = 2400;
+var GROK_SESSION_END_BUDGET_MS = 800;
 var STDIN_TIMEOUT_MS = 300;
 var USAGE = `reconnect <command>
 
 Commands:
-  emit <event>         Read Claude Code hook JSON on stdin and send it to Reconnect.
+  emit <event>         Read Claude Code or Grok Build hook JSON on stdin and send it to Reconnect.
                        <event>: ${HOOK_EVENTS.join(" | ")}
-  inject-card          Print the lane card to stdout (use on SessionStart).
+  inject-card          Print the lane card to stdout (use on SessionStart; Claude Code only).
   install [--bin X]    Add the hooks to ~/.claude/settings.json (X = command, default "reconnect").
                        The Claude Code plugin is easier and updates itself (docs/HOOKS.md).
   uninstall [--bin X]  Remove the hooks that install added from ~/.claude/settings.json.
@@ -5678,15 +5860,19 @@ async function main(argv) {
   try {
     switch (cmd.name) {
       case "emit": {
-        const deadline = new Deadline(HOOK_BUDGET_MS);
+        const quick = cmd.event === "SessionEnd" && isGrokEnv(process.env);
+        const deadline = new Deadline(quick ? GROK_SESSION_END_BUDGET_MS : HOOK_BUDGET_MS);
         if (skipLegacyRun(cfg.home)) return 0;
-        await emit(cmd.event, await readStdin(STDIN_TIMEOUT_MS), cfg, deadline);
+        await emit(cmd.event, await readStdin(STDIN_TIMEOUT_MS), cfg, deadline, process.env, {
+          cliPath: process.argv[1]
+        });
         return 0;
       }
       case "emit-unknown":
         log(cfg.home, `emit: unknown event ${JSON.stringify(cmd.event.slice(0, 64))}, ignored`);
         return 0;
       case "inject-card": {
+        if (isGrokEnv(process.env)) return 0;
         const deadline = new Deadline(HOOK_BUDGET_MS);
         if (skipLegacyRun(cfg.home)) return 0;
         await injectCard(await readStdin(STDIN_TIMEOUT_MS), cfg, deadline, stdout);
@@ -5716,7 +5902,8 @@ async function main(argv) {
 }
 
 // src/cli.ts
-var hardStop = setTimeout(() => process.exit(0), 2500);
+var grokSessionEnd = process.argv[2] === "emit" && process.argv[3] === "SessionEnd" && !!(process.env.GROK_HOOK_EVENT || process.env.GROK_SESSION_ID);
+var hardStop = setTimeout(() => process.exit(0), grokSessionEnd ? 1e3 : 2500);
 var isHook = process.argv[2] === "emit" || process.argv[2] === "inject-card";
 if (!isHook) clearTimeout(hardStop);
 main(process.argv.slice(2)).then((code) => process.exit(code)).catch(() => process.exit(0));
