@@ -21,6 +21,9 @@ function readJson(rel) {
   }
 }
 
+/** `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js" emit Stop` or `… inject-card`: no other shell text. */
+const HOOK_COMMAND = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/cli\.js"(?: (?:emit [A-Za-z]+|inject-card))$/;
+
 const git = (...args) =>
   execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -63,14 +66,16 @@ for (const entry of entries) {
   for (const [event, groups] of Object.entries(events ?? {})) {
     for (const group of Array.isArray(groups) ? groups : []) {
       for (const h of group?.hooks ?? []) {
+        // Plugin 1.4.0+: one shell command string with the plugin path in double quotes. Claude
+        // Code and Grok Build both run it; Grok Build ignores the exec form (command + args).
         const ok =
           h?.type === 'command' &&
-          h.command === 'node' &&
-          Array.isArray(h.args) &&
-          h.args[0] === '${CLAUDE_PLUGIN_ROOT}/dist/cli.js';
+          h.args === undefined &&
+          typeof h.command === 'string' &&
+          HOOK_COMMAND.test(h.command);
         if (!ok)
           fail(
-            `Plugin "${entry.name}", ${event}: every hook must be exec form: command "node", args ["\${CLAUDE_PLUGIN_ROOT}/dist/cli.js", ...].`,
+            `Plugin "${entry.name}", ${event}: every hook must be one command string: node "\${CLAUDE_PLUGIN_ROOT}/dist/cli.js" <command> (no "args").`,
           );
       }
     }
