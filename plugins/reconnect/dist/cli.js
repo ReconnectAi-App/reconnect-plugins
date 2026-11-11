@@ -4635,7 +4635,8 @@ var MODEL_PROVIDER_INFO = {
     label: MODEL_PROVIDER_LABEL.anthropic,
     keyLabel: "API key",
     keyHelpUrl: "https://console.anthropic.com/settings/keys",
-    keyPlaceholder: ""
+    keyPlaceholder: "",
+    recommended: true
   },
   bedrock: {
     label: MODEL_PROVIDER_LABEL.bedrock,
@@ -4647,7 +4648,8 @@ var MODEL_PROVIDER_INFO = {
     label: MODEL_PROVIDER_LABEL.xai,
     keyLabel: "xAI API key",
     keyHelpUrl: "https://console.x.ai",
-    keyPlaceholder: "xai-\u2026"
+    keyPlaceholder: "xai-\u2026",
+    note: "Use your own xAI API key. Cards can take longer."
   }
 };
 var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
