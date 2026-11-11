@@ -4611,7 +4611,32 @@ var ContextListSchema = external_exports.array(external_exports.object({
 }));
 
 // ../shared/dist/esm/model-settings.js
-var MODEL_PROVIDERS = ["anthropic", "bedrock"];
+var MODEL_PROVIDERS = ["anthropic", "bedrock", "xai"];
+var MODEL_PROVIDER_LABEL = {
+  anthropic: "Claude API",
+  bedrock: "AWS Bedrock",
+  xai: "xAI Grok"
+};
+var MODEL_PROVIDER_INFO = {
+  anthropic: {
+    label: MODEL_PROVIDER_LABEL.anthropic,
+    keyLabel: "API key",
+    keyHelpUrl: "https://console.anthropic.com/settings/keys",
+    keyPlaceholder: ""
+  },
+  bedrock: {
+    label: MODEL_PROVIDER_LABEL.bedrock,
+    keyLabel: "Bedrock API key",
+    keyHelpUrl: "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html",
+    keyPlaceholder: ""
+  },
+  xai: {
+    label: MODEL_PROVIDER_LABEL.xai,
+    keyLabel: "xAI API key",
+    keyHelpUrl: "https://console.x.ai",
+    keyPlaceholder: "xai-\u2026"
+  }
+};
 var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
 var AWS_PROFILE_PATTERN = /^[A-Za-z0-9_.@+-]{1,64}$/;
 var emptyToUndefined = (v) => typeof v === "string" && !v.trim() ? void 0 : v;
@@ -4621,6 +4646,10 @@ var awsRegion = external_exports.string().trim().toLowerCase().regex(AWS_REGION_
 var AnthropicSettings = external_exports.object({
   provider: external_exports.literal("anthropic"),
   apiKey: external_exports.string().trim().min(8, "Paste the whole API key").max(500)
+}).strict();
+var XaiSettings = external_exports.object({
+  provider: external_exports.literal("xai"),
+  apiKey: external_exports.string().trim().min(20, "Paste the whole xAI API key").max(500, "Paste the whole xAI API key")
 }).strict();
 var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
   external_exports.object({
@@ -4644,7 +4673,7 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     awsProfile: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(AWS_PROFILE_PATTERN, "Use letters, digits and - _ . @ + only").optional())
   }).strict()
 ]);
-var SaveModelSettingsBody = external_exports.union([AnthropicSettings, BedrockSettings]);
+var SaveModelSettingsBody = external_exports.union([AnthropicSettings, BedrockSettings, XaiSettings]);
 function defaultBedrockAuth(v) {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     const o = v;
@@ -4660,7 +4689,8 @@ var ModelSettingsViewSchema = external_exports.object({
   source: external_exports.enum(["settings", "env", "none"]),
   provider: external_exports.enum(MODEL_PROVIDERS).nullable(),
   /**
-   * Last 4 characters of the Claude API key, of the Bedrock API key or of the AWS access key ID.
+   * Last 4 characters of the Claude API key, of the xAI API key, of the Bedrock API key or of the
+   * AWS access key ID.
    * The key itself is never returned.
    */
   keyHint: external_exports.string().nullable(),
