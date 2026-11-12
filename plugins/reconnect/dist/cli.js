@@ -23,7 +23,17 @@ var CONTEXT_KINDS = [
   "jira_epic",
   "azure_devops_epic",
   "github_parent",
-  "gitlab_epic"
+  "gitlab_epic",
+  // Source fields the user can group by instead (SPEC-v2 V2-F17).
+  "jira_component",
+  "jira_label",
+  "jira_version",
+  "azure_devops_area",
+  "azure_devops_tag",
+  "github_milestone",
+  "github_label",
+  "gitlab_label",
+  "gitlab_milestone"
 ];
 var TRIGGER_KINDS = [
   "ticket",
@@ -4696,6 +4706,40 @@ var ConnectSourceSchema = external_exports.object({
 }).strict();
 var PatchSourceSchema = external_exports.object({ enabled: external_exports.boolean() }).strict();
 var iso2 = external_exports.string().datetime({ offset: true });
+var GROUP_BYS = [
+  "parent",
+  "component",
+  "label",
+  "fix_version",
+  "area_path",
+  "tag",
+  "milestone",
+  "none"
+];
+var GROUP_VALUES_MAX = 50;
+var UpdateSourceGroupingSchema = external_exports.object({
+  groupBy: external_exports.enum(GROUP_BYS),
+  groupValues: external_exports.array(external_exports.string().trim().min(1).max(200)).max(GROUP_VALUES_MAX).default([]),
+  groupPrefix: external_exports.string().trim().max(50).nullable().optional().transform((v) => v || null)
+}).strict();
+var GroupOptionSchema = external_exports.object({
+  value: external_exports.enum(GROUP_BYS),
+  label: external_exports.string(),
+  available: external_exports.boolean(),
+  /** Why the option is off, in plain words. */
+  reason: external_exports.string().nullable()
+});
+var GroupValuesResponseSchema = external_exports.object({
+  values: external_exports.array(external_exports.string()),
+  message: external_exports.string().nullable()
+});
+var GroupPreviewResponseSchema = external_exports.object({
+  /** Open lanes that get a group with this rule. */
+  lanes: external_exports.number().int(),
+  groups: external_exports.number().int(),
+  /** True when not all lanes were checked in time. */
+  partial: external_exports.boolean()
+});
 var SourceViewSchema = external_exports.object({
   kind: external_exports.enum(SOURCE_KINDS),
   label: external_exports.string(),
@@ -4708,7 +4752,15 @@ var SourceViewSchema = external_exports.object({
   enabled: external_exports.boolean(),
   status: external_exports.enum(["untested", "ok", "error"]).nullable(),
   statusMessage: external_exports.string().nullable(),
-  lastCheckedAt: iso2.nullable()
+  lastCheckedAt: iso2.nullable(),
+  /**
+   * Grouping (V2-F17). Null and [] for sources without the setting or not connected. Defaults let
+   * a newer web app read an older API.
+   */
+  groupBy: external_exports.enum(GROUP_BYS).nullable().default(null),
+  groupValues: external_exports.array(external_exports.string()).default([]),
+  groupPrefix: external_exports.string().nullable().default(null),
+  groupOptions: external_exports.array(GroupOptionSchema).default([])
 });
 var SourcesResponseSchema = external_exports.object({
   /** The caller's workspace. The connections listed are the caller's own. */
@@ -4974,7 +5026,9 @@ var JIRA_RE = new RegExp(`(?<![A-Za-z0-9-])${TICKET_KEY_RE.source}(?![\\w-])`, "
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-var DEFAULT_URL = "http://localhost:4317";
+var DEFAULT_URL = "https://api.reconnect-ai.me";
+var OLD_DEFAULT_URLS = ["http://localhost:4317"];
+var isDefaultUrl = (u) => u === DEFAULT_URL || OLD_DEFAULT_URLS.includes(u);
 var str = (v) => typeof v === "string" && v.trim() ? v.trim() : null;
 var noSlash = (u) => u.replace(/\/+$/, "");
 var configFile = (home) => join(home, "config.json");
@@ -4992,7 +5046,7 @@ function loadConfig(env = process.env) {
   const file = readConfigFile(home);
   const pluginUrl = str(env.CLAUDE_PLUGIN_OPTION_URL);
   const url = noSlash(
-    str(env.RECONNECT_URL) ?? (pluginUrl && noSlash(pluginUrl) !== DEFAULT_URL ? pluginUrl : null) ?? str(file.url) ?? pluginUrl ?? DEFAULT_URL
+    str(env.RECONNECT_URL) ?? (pluginUrl && !isDefaultUrl(noSlash(pluginUrl)) ? pluginUrl : null) ?? str(file.url) ?? pluginUrl ?? DEFAULT_URL
   );
   const tokens = [
     ["env", str(env.RECONNECT_TOKEN)],

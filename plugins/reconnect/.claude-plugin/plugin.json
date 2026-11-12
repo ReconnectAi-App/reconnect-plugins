@@ -1,7 +1,7 @@
 {
   "name": "reconnect",
   "displayName": "Reconnect",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "Sends your Claude Code and Grok Build session events to Reconnect, so you can get back into any lane in about 30 seconds. Never blocks your coding agent.",
   "author": {
     "name": "Andres Carmona"
@@ -19,8 +19,8 @@
     "url": {
       "type": "string",
       "title": "Reconnect address",
-      "description": "The address of your Reconnect server. Reconnect Cloud: https://api.reconnect-ai.me. Self-hosted: for example http://localhost:4317.",
-      "default": "http://localhost:4317",
+      "description": "The address of your Reconnect server. Keep the default for Reconnect Cloud. Self-hosted: for example http://localhost:4317.",
+      "default": "https://api.reconnect-ai.me",
       "required": false
     },
     "token": {
