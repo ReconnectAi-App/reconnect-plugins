@@ -4315,8 +4315,10 @@ var HOOK_EVENTS = [
   "SubagentStop",
   "Notification",
   "PreCompact",
-  "SessionEnd"
+  "SessionEnd",
+  "UserPromptSubmit"
 ];
+var PROMPT_MAX_CHARS = 2e4;
 var LaneSourceSchema = external_exports.enum(["env", "branch_ticket", "branch", "cwd"]);
 var EventEnvelopeSchema = external_exports.object({
   v: external_exports.literal(1),
@@ -4329,7 +4331,15 @@ var EventEnvelopeSchema = external_exports.object({
   agentId: external_exports.string().min(1).nullable(),
   transcriptPath: external_exports.string().min(1).nullable(),
   cwd: external_exports.string().min(1),
-  lane: external_exports.object({ key: external_exports.string().min(1).max(200), source: LaneSourceSchema }),
+  lane: external_exports.object({
+    key: external_exports.string().min(1).max(200),
+    source: LaneSourceSchema,
+    /**
+     * true = the key of a plain-branch lane already has the repository in it (`app/main`, hooks
+     * 1.5.0+). Missing on older hooks: the API adds the repository itself (SPEC-v2 V2-F10).
+     */
+    scoped: external_exports.boolean().optional()
+  }),
   git: external_exports.object({
     branch: external_exports.string().nullable(),
     headSha: external_exports.string().nullable(),
@@ -4348,6 +4358,13 @@ var EventEnvelopeSchema = external_exports.object({
    * and PreCompact; `null` = the file could not be read. Older hooks do not send it.
    */
   transcriptTail: external_exports.string().max(TRANSCRIPT_TAIL_MAX_CHARS).nullable().optional(),
+  /**
+   * UserPromptSubmit only: the text the user typed, secrets replaced, every other character kept,
+   * cut at PROMPT_MAX_CHARS (SPEC-v2 V2-F10). Missing when the user turned it off.
+   */
+  prompt: external_exports.string().max(PROMPT_MAX_CHARS).nullable().optional(),
+  /** true = the prompt was longer than PROMPT_MAX_CHARS and only its start was sent. */
+  promptTruncated: external_exports.boolean().optional(),
   /** Hook-specific fields, allowlisted per event. Never the transcript. */
   detail: external_exports.record(external_exports.string(), external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean(), external_exports.null()]))
 });
@@ -4370,6 +4387,17 @@ function resolveLane(h) {
   }
   const base = h.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || h.cwd || "unknown";
   return { key: base.slice(0, 200), source: "cwd" };
+}
+function repoNameOf(repoRemote, cwd) {
+  const fromRemote = repoRemote?.replace(/\/+$/, "").split("/").pop();
+  if (fromRemote)
+    return fromRemote;
+  return cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "unknown";
+}
+function scopeLaneKey(lane, repo) {
+  if (lane.source !== "branch")
+    return lane;
+  return { key: `${repo}/${lane.key}`.slice(0, 200), source: lane.source, scoped: true };
 }
 var SEGMENT = /^[\w.~-]+$/;
 function normalizeRemote(raw) {
@@ -4566,7 +4594,12 @@ var LaneDetailSchema = external_exports.object({
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
   /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
-  summaryStatus: SummaryStatusSchema.nullable().optional()
+  summaryStatus: SummaryStatusSchema.nullable().optional(),
+  /**
+   * The newest text the user typed in the lane's sessions, verbatim (secrets replaced; SPEC-v2
+   * V2-F10). truncated = the user typed more than 20 000 chars. null = none; missing = older API.
+   */
+  lastPrompt: external_exports.object({ text: external_exports.string(), truncated: external_exports.boolean(), occurredAt: iso }).nullable().optional()
 });
 
 // ../shared/dist/esm/sources.js
@@ -4859,6 +4892,9 @@ var WaitlistInviteResponseSchema = external_exports.object({
   expiresAt: external_exports.string()
 });
 
+// ../shared/dist/esm/refs.js
+var JIRA_RE = new RegExp(`(?<![A-Za-z0-9-])${TICKET_KEY_RE.source}(?![\\w-])`, "g");
+
 // src/config.ts
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -4896,7 +4932,8 @@ function loadConfig(env = process.env) {
     webUrl: noSlash(str(env.RECONNECT_WEB_URL) ?? str(file.webUrl) ?? url),
     deviceId: str(file.deviceId),
     home,
-    sendTranscriptTail: (str(env.RECONNECT_SEND_TRANSCRIPT_TAIL) ?? str(file.sendTranscriptTail) ?? "on").toLowerCase() !== "off"
+    sendTranscriptTail: (str(env.RECONNECT_SEND_TRANSCRIPT_TAIL) ?? str(file.sendTranscriptTail) ?? "on").toLowerCase() !== "off",
+    sendPrompt: (str(env.RECONNECT_SEND_PROMPT) ?? str(file.sendPrompt) ?? "on").toLowerCase() !== "off"
   };
 }
 
@@ -5141,7 +5178,9 @@ var DETAIL_ALLOWLIST = {
   SubagentStop: ["stop_hook_active", "agent_id", "agent_type", "agent_transcript_path"],
   Notification: ["message", "notification_type"],
   PreCompact: ["trigger"],
-  SessionEnd: ["reason"]
+  SessionEnd: ["reason"],
+  // The prompt goes in its own envelope field (`prompt`), never in `detail`.
+  UserPromptSubmit: []
 };
 var MAX_DETAIL_STRING = 300;
 var str2 = (v) => typeof v === "string" && v.length > 0 ? v : null;
@@ -5171,7 +5210,10 @@ function buildEnvelope(a) {
     agentId,
     transcriptPath: str2(a.input.transcript_path),
     cwd,
-    lane: resolveLane({ envLane: a.envLane, branch: a.git?.branch, cwd }),
+    lane: scopeLaneKey(
+      resolveLane({ envLane: a.envLane, branch: a.git?.branch, cwd }),
+      repoNameOf(repoRemote, cwd)
+    ),
     git: a.git ? git2 : null,
     ...repoRemote ? { repoRemote } : {},
     detail
@@ -5414,6 +5456,9 @@ function normalizeHookInput(raw, env, event) {
     case "SessionEnd":
       set("reason", raw.reason);
       break;
+    case "UserPromptSubmit":
+      set("prompt", raw.prompt);
+      break;
   }
   return {
     runtime: "grok_build",
@@ -5542,6 +5587,11 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
       log(cfg.home, `emit ${event}: Grok Build session file not readable, sent the last answer`);
       envelope.transcriptTail = lastAssistantMessage ? capRedacted(`assistant: ${lastAssistantMessage}`, TRANSCRIPT_TAIL_MAX_CHARS) : null;
     }
+  }
+  if (event === "UserPromptSubmit" && cfg.sendPrompt && typeof input.prompt === "string") {
+    const text = redact(input.prompt);
+    envelope.prompt = text.slice(0, PROMPT_MAX_CHARS);
+    if (text.length > PROMPT_MAX_CHARS) envelope.promptTruncated = true;
   }
   const send = makeSender(cfg, deadline);
   const queueDrained = await flushQueue(cfg.home, send);
@@ -5713,7 +5763,10 @@ async function injectCard(rawInput, cfg, deadline, out, env = process.env) {
   } catch {
   }
   const git2 = await readGit(cwd, deadline.cap(GIT_TIMEOUT_MS));
-  const lane = resolveLane({ envLane: env.LANE, branch: git2?.branch, cwd });
+  const lane = scopeLaneKey(
+    resolveLane({ envLane: env.LANE, branch: git2?.branch, cwd }),
+    repoNameOf(git2?.repoRemote ?? null, cwd)
+  );
   const card = await getText(
     cfg,
     `/lanes/${encodeURIComponent(lane.key)}/card.md`,
