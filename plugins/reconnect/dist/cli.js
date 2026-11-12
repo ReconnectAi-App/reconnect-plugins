@@ -4316,7 +4316,8 @@ var HOOK_EVENTS = [
   "Notification",
   "PreCompact",
   "SessionEnd",
-  "UserPromptSubmit"
+  "UserPromptSubmit",
+  "SubagentStart"
 ];
 var PROMPT_MAX_CHARS = 2e4;
 var LaneSourceSchema = external_exports.enum(["env", "branch_ticket", "branch", "cwd"]);
@@ -4328,7 +4329,14 @@ var EventEnvelopeSchema = external_exports.object({
   /** Coding agent that sent the event. Missing = `claude_code` (hooks before 1.4.0). */
   runtime: external_exports.enum(RUNTIMES).optional(),
   sessionId: external_exports.string().min(1),
+  /** Subagent id on SubagentStart and SubagentStop; null on every other event. */
   agentId: external_exports.string().min(1).nullable(),
+  /**
+   * Claude Code only (hooks 1.6.0+): id of the session that started this session, from the env var
+   * RECONNECT_PARENT_SESSION. The API links the new lane to that session's lane once, when it makes
+   * the lane (SPEC-v2 V2-F14). Missing = older hooks or no main session = no link.
+   */
+  parentSessionId: external_exports.string().min(1).max(200).nullable().optional(),
   transcriptPath: external_exports.string().min(1).nullable(),
   cwd: external_exports.string().min(1),
   lane: external_exports.object({
@@ -4457,9 +4465,15 @@ var PatchLaneSchema = external_exports.object({
 var ParkLaneSchema = external_exports.object({
   /** Empty string = park without a note. */
   text: external_exports.string().max(PARK_NOTE_MAX).default(""),
-  source: external_exports.enum(PARK_NOTE_SOURCES).default("text")
+  source: external_exports.enum(PARK_NOTE_SOURCES).default("text"),
+  /** Also park the lane's active helper lanes (SPEC-v2 V2-F14). Missing = true. */
+  withHelpers: external_exports.boolean().optional()
 }).strict();
-var CloseLaneSchema = external_exports.object({ reason: external_exports.enum(CLOSE_REASONS).default("manual") }).strict();
+var CloseLaneSchema = external_exports.object({
+  reason: external_exports.enum(CLOSE_REASONS).default("manual"),
+  /** Also close the lane's active helper lanes (SPEC-v2 V2-F14). Missing = true. */
+  withHelpers: external_exports.boolean().optional()
+}).strict();
 var iso = external_exports.string().datetime({ offset: true });
 var SUMMARY_STATUSES = ["updating", "failed", "off"];
 var SUMMARY_FAILURES = ["sign_in", "error"];
@@ -4477,6 +4491,31 @@ var ContextRefSchema = external_exports.object({
   kind: external_exports.enum(CONTEXT_KINDS),
   /** Jira epic key, Azure DevOps work item id, GitHub `owner/repo#n` or GitLab `group&iid`. */
   externalKey: external_exports.string()
+});
+var HELPER_KINDS = ["session", "subagent"];
+var HelperItemSchema = external_exports.object({
+  /** Lane id (session) or process id (subagent). */
+  id: external_exports.string(),
+  kind: external_exports.enum(HELPER_KINDS),
+  /** session: its own lane; subagent: the main lane. */
+  laneId: external_exports.string(),
+  title: external_exports.string(),
+  /** subagent: 'running' while open, 'done' after its stop. session: the card state (null = no card yet). */
+  state: external_exports.enum(CARD_STATES).nullable(),
+  /** What it needs from you; only for blocked_on_me / review. */
+  line: external_exports.string().nullable(),
+  lastEventAt: iso,
+  sessionClosed: external_exports.boolean().optional(),
+  summaryStatus: SummaryStatusSchema.nullable().optional(),
+  /** session only, for "Jump to a lane": the helper lane's key, ticket and area. */
+  key: external_exports.string().optional(),
+  ticketKey: external_exports.string().nullable().optional(),
+  area: external_exports.string().nullable().optional()
+});
+var HelperCountsSchema = external_exports.object({
+  needsMe: external_exports.number().int(),
+  running: external_exports.number().int(),
+  done: external_exports.number().int()
 });
 var QueueItemSchema = external_exports.object({
   id: external_exports.string(),
@@ -4501,7 +4540,12 @@ var QueueItemSchema = external_exports.object({
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
   /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
-  summaryStatus: SummaryStatusSchema.nullable().optional()
+  summaryStatus: SummaryStatusSchema.nullable().optional(),
+  /** Main lane of a helper lane (SPEC-v2 V2-F14). Set only on an orphan helper row. Missing = older API. */
+  parentLaneId: external_exports.string().nullable().optional(),
+  /** Helpers of a main lane, in show order. [] when none. Missing = older API. */
+  helpers: external_exports.array(HelperItemSchema).optional(),
+  helperCounts: HelperCountsSchema.optional()
 });
 var QueueResponseSchema = external_exports.object({
   groups: external_exports.array(external_exports.object({
@@ -4549,7 +4593,9 @@ var LaneProcessSchema = external_exports.object({
   /** Shell command that resumes the session. null for subagents and humans. */
   resumeCommand: external_exports.string().nullable(),
   /** Coding agent of this process. Missing = Claude Code (older API). */
-  runtime: external_exports.enum(RUNTIMES).optional()
+  runtime: external_exports.enum(RUNTIMES).optional(),
+  /** Subagents: the helper title ("Explore helper", SPEC-v2 V2-F14). Missing = older API. */
+  title: external_exports.string().optional()
 });
 var LaneDocSchema = external_exports.object({
   id: external_exports.string(),
@@ -4605,8 +4651,17 @@ var LaneDetailSchema = external_exports.object({
    * The newest text the user typed in the lane's sessions, verbatim (secrets replaced; SPEC-v2
    * V2-F10). truncated = the user typed more than 20 000 chars. null = none; missing = older API.
    */
-  lastPrompt: external_exports.object({ text: external_exports.string(), truncated: external_exports.boolean(), occurredAt: iso }).nullable().optional()
+  lastPrompt: external_exports.object({ text: external_exports.string(), truncated: external_exports.boolean(), occurredAt: iso }).nullable().optional(),
+  /** Main lane of a helper lane (SPEC-v2 V2-F14). null = a main lane; missing = older API. */
+  parentLaneId: external_exports.string().nullable().optional(),
+  /** The main lane, for the "Helper of …" link. null when this is a main lane or the main lane is gone. */
+  parent: external_exports.object({ id: external_exports.string(), title: external_exports.string() }).nullable().optional(),
+  /** Helpers of a main lane, in show order (same as the queue). Missing = older API. */
+  helpers: external_exports.array(HelperItemSchema).optional()
 });
+function shellQuote(s) {
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+}
 
 // ../shared/dist/esm/sources.js
 var SOURCE_KINDS = [
@@ -5173,7 +5228,7 @@ async function connect(opts, deps) {
 
 // src/commands/emit.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync3, existsSync, readFileSync as readFileSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
 
 // src/envelope.ts
@@ -5186,8 +5241,11 @@ var DETAIL_ALLOWLIST = {
   PreCompact: ["trigger"],
   SessionEnd: ["reason"],
   // The prompt goes in its own envelope field (`prompt`), never in `detail`.
-  UserPromptSubmit: []
+  UserPromptSubmit: [],
+  SubagentStart: ["agent_id", "agent_type"]
 };
+var SUBAGENT_EVENTS = ["SubagentStart", "SubagentStop"];
+var MAX_PARENT_SESSION = 200;
 var MAX_DETAIL_STRING = 300;
 var str2 = (v) => typeof v === "string" && v.length > 0 ? v : null;
 function pickDetail(event, input) {
@@ -5204,8 +5262,10 @@ function buildEnvelope(a) {
   if (!sessionId) return null;
   const cwd = str2(a.input.cwd) ?? a.fallbackCwd;
   const detail = pickDetail(a.event, a.input);
-  const agentId = a.event === "SubagentStop" ? str2(a.input.agent_id) : null;
+  const agentId = SUBAGENT_EVENTS.includes(a.event) ? str2(a.input.agent_id) : null;
   const { repoRemote = null, ...git2 } = a.git ?? {};
+  const parent = (a.runtime ?? "claude_code") === "claude_code" ? a.parentSession?.trim() : "";
+  const parentSessionId = parent && parent !== sessionId && parent.length <= MAX_PARENT_SESSION ? parent : null;
   return {
     v: 1,
     eventId: (a.uuid ?? randomUUID)(),
@@ -5223,6 +5283,7 @@ function buildEnvelope(a) {
     ),
     git: a.git ? git2 : null,
     ...repoRemote ? { repoRemote } : {},
+    ...parentSessionId ? { parentSessionId } : {},
     detail
   };
 }
@@ -5477,7 +5538,8 @@ function normalizeHookInput(raw, env, event) {
 function grokSkip(event, raw) {
   if (event === "Stop" && str3(raw.reason) && raw.reason !== "end_turn")
     return `Stop with reason ${JSON.stringify(String(raw.reason).slice(0, 40))}`;
-  if (event === "SubagentStop") return "SubagentStop (Grok Build subagents are not captured)";
+  if (event === "SubagentStop" || event === "SubagentStart")
+    return `${event} (Grok Build subagents are not captured)`;
   if (event === "SessionEnd" && str3(raw.subagentType)) return "SessionEnd of a subagent";
   return null;
 }
@@ -5553,6 +5615,22 @@ function startBackgroundFlush(cliPath, home) {
     log(home, `background flush did not start: ${err?.message ?? String(err)}`);
   }
 }
+var PARENT_SESSION_ENV = "RECONNECT_PARENT_SESSION";
+function passParentSession(sessionId, env, home) {
+  const file = env.CLAUDE_ENV_FILE;
+  if (!file) return;
+  try {
+    let lead = "";
+    if (existsSync(file)) {
+      const text = readFileSync3(file, "utf8");
+      if (text.length > 0 && !text.endsWith("\n")) lead = "\n";
+    }
+    appendFileSync3(file, `${lead}export ${PARENT_SESSION_ENV}=${shellQuote(sessionId)}
+`);
+  } catch (err) {
+    log(home, `could not write CLAUDE_ENV_FILE: ${err?.message ?? String(err)}`);
+  }
+}
 async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}) {
   let raw;
   try {
@@ -5573,12 +5651,15 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
     git: git2,
     envLane: env.LANE,
     fallbackCwd: cwd,
-    runtime
+    runtime,
+    parentSession: env[PARENT_SESSION_ENV]
   });
   if (!envelope) {
     log(cfg.home, `emit ${event}: no session_id, skipped`);
     return;
   }
+  if (event === "SessionStart" && runtime === "claude_code")
+    passParentSession(envelope.sessionId, env, cfg.home);
   if (queueOnly) {
     enqueue(cfg.home, envelope);
     if (opts.cliPath) startBackgroundFlush(opts.cliPath, cfg.home);
@@ -5624,7 +5705,7 @@ import {
   copyFileSync,
   existsSync as existsSync2,
   mkdirSync as mkdirSync4,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync4,
   renameSync as renameSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
@@ -5671,7 +5752,7 @@ function mergeSettings(current, bin) {
 function readSettings(file, out, verb) {
   if (!existsSync2(file)) return {};
   try {
-    return JSON.parse(readFileSync3(file, "utf8"));
+    return JSON.parse(readFileSync4(file, "utf8"));
   } catch {
     out(`Cannot read ${file}: it is not valid JSON. Fix it, then run ${verb} again.
 `);
@@ -5847,7 +5928,7 @@ function uninstall(extraBin, out, file = settingsPath()) {
 }
 
 // src/plugin-guard.ts
-import { readFileSync as readFileSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join6 } from "node:path";
 var PLUGIN_ID = "reconnect@reconnect-plugins";
@@ -5855,7 +5936,7 @@ var MAX_FILE_BYTES = 1024 * 1024;
 var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join6(homedir3(), ".claude");
 var grokHome = (env) => env.GROK_HOME || join6(homedir3(), ".grok");
 function readJson(file) {
-  const text = readFileSync4(file, "utf8");
+  const text = readFileSync5(file, "utf8");
   if (text.length > MAX_FILE_BYTES) throw new Error("too big");
   return JSON.parse(text);
 }
@@ -5898,7 +5979,7 @@ function skipLegacyRun(home, env = process.env) {
   const mark = join6(home, "legacy-skip.day");
   let last = "";
   try {
-    last = readFileSync4(mark, "utf8").trim();
+    last = readFileSync5(mark, "utf8").trim();
   } catch {
   }
   if (last !== day) {

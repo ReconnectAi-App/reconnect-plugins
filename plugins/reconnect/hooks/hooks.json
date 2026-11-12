@@ -81,6 +81,17 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\" emit SubagentStart",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
