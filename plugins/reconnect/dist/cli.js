@@ -34,7 +34,8 @@ var TRIGGER_KINDS = [
   "commit",
   "other"
 ];
-var CLOSE_REASONS = ["pr_merged", "decision_made", "doc_approved", "manual"];
+var USER_CLOSE_REASONS = ["pr_merged", "decision_made", "doc_approved", "manual"];
+var CLOSE_REASONS = [...USER_CLOSE_REASONS, "session_ended"];
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -4470,10 +4471,11 @@ var ParkLaneSchema = external_exports.object({
   withHelpers: external_exports.boolean().optional()
 }).strict();
 var CloseLaneSchema = external_exports.object({
-  reason: external_exports.enum(CLOSE_REASONS).default("manual"),
+  reason: external_exports.enum(USER_CLOSE_REASONS).default("manual"),
   /** Also close the lane's active helper lanes (SPEC-v2 V2-F14). Missing = true. */
   withHelpers: external_exports.boolean().optional()
 }).strict();
+var CloseAllLanesResponseSchema = external_exports.object({ closed: external_exports.number().int().nonnegative() });
 var iso = external_exports.string().datetime({ offset: true });
 var SUMMARY_STATUSES = ["updating", "failed", "off"];
 var SUMMARY_FAILURES = ["sign_in", "error"];
@@ -5642,7 +5644,7 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
   const { runtime, input, lastAssistantMessage, skip } = normalizeHookInput(raw, env, event);
   if (skip) return;
-  const queueOnly = runtime === "grok_build" && event === "SessionEnd";
+  const queueOnly = event === "SessionEnd";
   const cwd = typeof input.cwd === "string" && input.cwd ? input.cwd : process.cwd();
   const git2 = await readGit(cwd, deadline.cap(queueOnly ? QUICK_GIT_TIMEOUT_MS : GIT_TIMEOUT_MS));
   const envelope = buildEnvelope({
@@ -6049,7 +6051,7 @@ async function main(argv) {
   try {
     switch (cmd.name) {
       case "emit": {
-        const quick = cmd.event === "SessionEnd" && isGrokEnv(process.env);
+        const quick = cmd.event === "SessionEnd";
         const deadline = new Deadline(quick ? GROK_SESSION_END_BUDGET_MS : HOOK_BUDGET_MS);
         if (skipLegacyRun(cfg.home)) return 0;
         await emit(cmd.event, await readStdin(STDIN_TIMEOUT_MS), cfg, deadline, process.env, {
