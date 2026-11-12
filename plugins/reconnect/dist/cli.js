@@ -4377,6 +4377,18 @@ var EventEnvelopeSchema = external_exports.object({
   /** Hook-specific fields, allowlisted per event. Never the transcript. */
   detail: external_exports.record(external_exports.string(), external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean(), external_exports.null()]))
 });
+var INJECTED_PROMPT_TAGS = [
+  "agent-message",
+  "task-notification",
+  "teammate-message",
+  "system-reminder",
+  "local-command-stdout",
+  "local-command-caveat"
+];
+var INJECTED_PROMPT_RE = new RegExp(`^<(?:${INJECTED_PROMPT_TAGS.join("|")})[\\s>]`);
+function isInjectedPrompt(text) {
+  return typeof text === "string" && INJECTED_PROMPT_RE.test(text.trimStart());
+}
 
 // ../shared/dist/esm/lane.js
 var TICKET_KEY_RE = /[A-Z][A-Z0-9]+-\d+/;
@@ -5644,6 +5656,7 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
   const { runtime, input, lastAssistantMessage, skip } = normalizeHookInput(raw, env, event);
   if (skip) return;
+  if (event === "UserPromptSubmit" && isInjectedPrompt(input.prompt)) return;
   const queueOnly = event === "SessionEnd";
   const cwd = typeof input.cwd === "string" && input.cwd ? input.cwd : process.cwd();
   const git2 = await readGit(cwd, deadline.cap(queueOnly ? QUICK_GIT_TIMEOUT_MS : GIT_TIMEOUT_MS));
