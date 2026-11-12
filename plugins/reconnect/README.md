@@ -7,7 +7,8 @@ coding agent.
 ## What you need
 
 - Node.js 22 or later. Type `node -v` in a terminal to check.
-- The address of your Reconnect server. Ask the person who runs Reconnect.
+- For Reconnect Cloud, nothing more. For a self-hosted Reconnect, the address of your server. Ask
+  the person who runs it.
 
 ## Install
 
@@ -20,7 +21,8 @@ In Claude Code, type these two commands:
 
 Claude Code asks for two values:
 
-- **Reconnect address**: for example `http://localhost:4317`, or your Tailscale name.
+- **Reconnect address**: keep the default `https://api.reconnect-ai.me` for Reconnect Cloud. For a
+  self-hosted server, type its address, for example `http://localhost:4317` or your Tailscale name.
 - **Reconnect token**: leave it empty. You connect this computer in the next step.
 
 If your organization set up Reconnect for you, leave both empty and stop here.
@@ -32,8 +34,8 @@ Restart Claude Code. Then type:
 ```
 
 Your browser opens Reconnect. Click **Connect**, then go back to Claude Code. Your lane shows in
-Reconnect after your next session starts. If Reconnect runs on another computer, start Claude Code
-one time with `RECONNECT_URL=<address> claude` before you type `/reconnect:connect`.
+Reconnect after your next session starts. For a self-hosted server, type its address after the
+command, for example `/reconnect:connect http://localhost:4317`.
 
 To check the connection, type `/reconnect:status`. To remove this computer, open Reconnect >
 Settings > Connected computers.
