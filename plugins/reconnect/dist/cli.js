@@ -4394,10 +4394,16 @@ function repoNameOf(repoRemote, cwd) {
     return fromRemote;
   return cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "unknown";
 }
-function scopeLaneKey(lane, repo) {
-  if (lane.source !== "branch")
+function sessionKeyPart(sessionId) {
+  const id = (sessionId ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+  return id ? `@${id}` : "";
+}
+function scopeLaneKey(lane, repo, sessionId) {
+  if (lane.source !== "branch" && lane.source !== "cwd")
     return lane;
-  return { key: `${repo}/${lane.key}`.slice(0, 200), source: lane.source, scoped: true };
+  const base = lane.source === "branch" ? `${repo}/${lane.key}` : lane.key;
+  const part = sessionKeyPart(sessionId);
+  return { key: base.slice(0, 200 - part.length) + part, source: lane.source, scoped: true };
 }
 var SEGMENT = /^[\w.~-]+$/;
 function normalizeRemote(raw) {
@@ -5212,7 +5218,8 @@ function buildEnvelope(a) {
     cwd,
     lane: scopeLaneKey(
       resolveLane({ envLane: a.envLane, branch: a.git?.branch, cwd }),
-      repoNameOf(repoRemote, cwd)
+      repoNameOf(repoRemote, cwd),
+      sessionId
     ),
     git: a.git ? git2 : null,
     ...repoRemote ? { repoRemote } : {},
@@ -5757,15 +5764,18 @@ async function status(cfg, out) {
 var MAX_CARD_CHARS = 4e3;
 async function injectCard(rawInput, cfg, deadline, out, env = process.env) {
   let cwd = process.cwd();
+  let sessionId = null;
   try {
     const input = JSON.parse(rawInput || "{}");
     if (typeof input.cwd === "string" && input.cwd) cwd = input.cwd;
+    if (typeof input.session_id === "string" && input.session_id) sessionId = input.session_id;
   } catch {
   }
   const git2 = await readGit(cwd, deadline.cap(GIT_TIMEOUT_MS));
   const lane = scopeLaneKey(
     resolveLane({ envLane: env.LANE, branch: git2?.branch, cwd }),
-    repoNameOf(git2?.repoRemote ?? null, cwd)
+    repoNameOf(git2?.repoRemote ?? null, cwd),
+    sessionId
   );
   const card = await getText(
     cfg,
