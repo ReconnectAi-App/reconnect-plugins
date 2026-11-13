@@ -5007,15 +5007,29 @@ var WaitlistEntryDtoSchema = external_exports.object({
   decidedAt: external_exports.string().nullable(),
   /** Null when no invite was made (or it was deleted). */
   inviteState: WaitlistInviteStateSchema.nullable(),
-  inviteExpiresAt: external_exports.string().nullable()
+  inviteExpiresAt: external_exports.string().nullable(),
+  /** When Reconnect emailed the current invite (Send invite). Null: not sent by Reconnect. */
+  inviteSentAt: external_exports.string().nullable().default(null),
+  /** When the person used the invite. */
+  inviteUsedAt: external_exports.string().nullable().default(null),
+  /** GitHub login of the person who used the invite. Null when it is not used. */
+  inviteUsedByLogin: external_exports.string().nullable().default(null),
+  /** Latest activity of that person (browser session or connected computer). Null when none. */
+  lastActiveAt: external_exports.string().nullable().default(null)
 });
 var WaitlistPageSchema = external_exports.object({
   entries: external_exports.array(WaitlistEntryDtoSchema),
   /** Pass as `cursor` to get the next page. Null on the last page. */
-  nextCursor: external_exports.string().nullable()
+  nextCursor: external_exports.string().nullable(),
+  /** True when the server can send the invitation email (Send invite). */
+  mailEnabled: external_exports.boolean().default(false)
 });
 var WaitlistInviteResponseSchema = external_exports.object({
   url: external_exports.string(),
+  expiresAt: external_exports.string()
+});
+var WaitlistSendInviteResponseSchema = external_exports.object({
+  sentAt: external_exports.string(),
   expiresAt: external_exports.string()
 });
 
