@@ -4784,11 +4784,12 @@ var ContextListSchema = external_exports.array(external_exports.object({
 }));
 
 // ../shared/dist/esm/model-settings.js
-var MODEL_PROVIDERS = ["anthropic", "bedrock", "xai"];
+var MODEL_PROVIDERS = ["anthropic", "bedrock", "xai", "openai"];
 var MODEL_PROVIDER_LABEL = {
   anthropic: "Claude API",
   bedrock: "AWS Bedrock",
-  xai: "xAI Grok"
+  xai: "xAI Grok",
+  openai: "OpenAI API"
 };
 var MODEL_PROVIDER_INFO = {
   anthropic: {
@@ -4810,6 +4811,13 @@ var MODEL_PROVIDER_INFO = {
     keyHelpUrl: "https://console.x.ai",
     keyPlaceholder: "xai-\u2026",
     note: "Use your own xAI API key. Cards can take longer."
+  },
+  openai: {
+    label: MODEL_PROVIDER_LABEL.openai,
+    keyLabel: "OpenAI API key",
+    keyHelpUrl: "https://platform.openai.com/api-keys",
+    keyPlaceholder: "sk-\u2026",
+    note: "Use your own OpenAI API key."
   }
 };
 var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
@@ -4825,6 +4833,10 @@ var AnthropicSettings = external_exports.object({
 var XaiSettings = external_exports.object({
   provider: external_exports.literal("xai"),
   apiKey: external_exports.string().trim().min(20, "Paste the whole xAI API key").max(500, "Paste the whole xAI API key")
+}).strict();
+var OpenAiSettings = external_exports.object({
+  provider: external_exports.literal("openai"),
+  apiKey: external_exports.string().trim().min(20, "Paste the whole OpenAI API key").max(500, "Paste the whole OpenAI API key")
 }).strict();
 var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
   external_exports.object({
@@ -4848,7 +4860,12 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     awsProfile: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(AWS_PROFILE_PATTERN, "Use letters, digits and - _ . @ + only").optional())
   }).strict()
 ]);
-var SaveModelSettingsBody = external_exports.union([AnthropicSettings, BedrockSettings, XaiSettings]);
+var SaveModelSettingsBody = external_exports.union([
+  AnthropicSettings,
+  BedrockSettings,
+  XaiSettings,
+  OpenAiSettings
+]);
 function defaultBedrockAuth(v) {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     const o = v;
@@ -5007,15 +5024,29 @@ var WaitlistEntryDtoSchema = external_exports.object({
   decidedAt: external_exports.string().nullable(),
   /** Null when no invite was made (or it was deleted). */
   inviteState: WaitlistInviteStateSchema.nullable(),
-  inviteExpiresAt: external_exports.string().nullable()
+  inviteExpiresAt: external_exports.string().nullable(),
+  /** When Reconnect emailed the current invite (Send invite). Null: not sent by Reconnect. */
+  inviteSentAt: external_exports.string().nullable().default(null),
+  /** When the person used the invite. */
+  inviteUsedAt: external_exports.string().nullable().default(null),
+  /** GitHub login of the person who used the invite. Null when it is not used. */
+  inviteUsedByLogin: external_exports.string().nullable().default(null),
+  /** Latest activity of that person (browser session or connected computer). Null when none. */
+  lastActiveAt: external_exports.string().nullable().default(null)
 });
 var WaitlistPageSchema = external_exports.object({
   entries: external_exports.array(WaitlistEntryDtoSchema),
   /** Pass as `cursor` to get the next page. Null on the last page. */
-  nextCursor: external_exports.string().nullable()
+  nextCursor: external_exports.string().nullable(),
+  /** True when the server can send the invitation email (Send invite). */
+  mailEnabled: external_exports.boolean().default(false)
 });
 var WaitlistInviteResponseSchema = external_exports.object({
   url: external_exports.string(),
+  expiresAt: external_exports.string()
+});
+var WaitlistSendInviteResponseSchema = external_exports.object({
+  sentAt: external_exports.string(),
   expiresAt: external_exports.string()
 });
 
