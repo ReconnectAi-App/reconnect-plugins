@@ -1,6 +1,6 @@
-# Reconnect plugin for Claude Code and Grok Build
+# Reconnect plugin for Claude Code, Grok Build and Codex
 
-This plugin sends your Claude Code and Grok Build session events to Reconnect. Reconnect then shows
+This plugin sends your Claude Code, Grok Build and Codex session events to Reconnect. Reconnect then shows
 each lane, so you can get back into any lane in about 30 seconds. The plugin never blocks your
 coding agent.
 
@@ -67,6 +67,34 @@ What is different in Grok Build:
 - The address and token fields of the Claude Code dialog do not apply. Grok Build uses the
   connection in `~/.reconnect/config.json` (from the connect step).
 - To get back into a lane, copy the resume command from Reconnect. It is `grok --resume <id>`.
+
+## Codex
+
+Codex is the coding agent of OpenAI. Use plugin version 1.8.0 or later. Type these commands in a
+terminal:
+
+```sh
+codex plugin marketplace add ReconnectAi-App/reconnect-plugins
+codex plugin add reconnect@reconnect-plugins
+```
+
+Open Codex and enter `/hooks`. Approve the Reconnect hooks. Codex does not run a hook before you
+approve it. After a plugin update, approve the hooks again.
+
+Connect the computer one time. One connection serves Claude Code, Grok Build and Codex. If this
+computer is not connected yet, this command finds the plugin and connects:
+
+```sh
+node "$(find ~/.codex/plugins -path '*reconnect*/dist/cli.js' | head -n 1)" connect --url <address>
+```
+
+What is different in Codex:
+
+- When Codex asks you to approve a command, Reconnect shows that the lane waits for you.
+- Codex cloud tasks do not show in Reconnect. They do not run on your computer.
+- The address and token fields of the Claude Code dialog do not apply. Codex uses the connection
+  in `~/.reconnect/config.json` (from the connect step).
+- To get back into a lane, copy the resume command from Reconnect. It is `codex resume <id>`.
 
 ## What it sends
 

@@ -4112,7 +4112,12 @@ var DistilledCardSchema = external_exports.object({
 });
 
 // ../shared/dist/esm/runtimes.js
-var RUNTIMES = ["claude_code", "grok_build"];
+var RUNTIMES = ["claude_code", "grok_build", "codex"];
+var RUNTIME_LABEL = {
+  claude_code: "Claude Code",
+  grok_build: "Grok Build",
+  codex: "Codex"
+};
 
 // ../shared/dist/esm/redact.js
 var redacted = (kind) => `[REDACTED:${kind}]`;
@@ -4309,13 +4314,85 @@ function renderGrokTranscript(jsonl, lastAssistantMessage) {
   }
   return blocks.map(blockLine).join("\n");
 }
+function codexOutputText(output) {
+  if (typeof output === "string")
+    return output;
+  if (Array.isArray(output))
+    return output.map((c) => typeof meta(c).text === "string" ? meta(c).text : "").filter(Boolean).join("\n");
+  const o = meta(output);
+  if (typeof o.content === "string")
+    return o.content;
+  return Array.isArray(o.content) ? codexOutputText(o.content) : "";
+}
+function codexMessageText(content) {
+  if (!Array.isArray(content))
+    return "";
+  return content.map((c) => {
+    const b = meta(c);
+    return (b.type === "input_text" || b.type === "output_text") && typeof b.text === "string" ? b.text : "";
+  }).filter(Boolean).join("\n");
+}
+function codexBlocks(jsonl) {
+  const out = [];
+  const fallback = [];
+  let sawEventText = false;
+  for (const raw of jsonl.split("\n")) {
+    if (!raw.trim())
+      continue;
+    let line;
+    try {
+      line = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const p = meta(line?.payload);
+    if (line?.type === "event_msg") {
+      if ((p.type === "user_message" || p.type === "agent_message") && typeof p.message === "string") {
+        sawEventText = true;
+        out.push({ role: p.type === "user_message" ? "user" : "assistant", text: p.message });
+      }
+    } else if (line?.type === "response_item") {
+      if (p.type === "function_call" || p.type === "custom_tool_call") {
+        const tool = { role: "tool", text: `[tool_use ${String(p.name ?? "tool")}]` };
+        out.push(tool);
+        fallback.push(tool);
+      } else if (p.type === "local_shell_call") {
+        const tool = { role: "tool", text: "[tool_use shell]" };
+        out.push(tool);
+        fallback.push(tool);
+      } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+        const t = codexOutputText(p.output).trim();
+        if (!t)
+          continue;
+        const tool = { role: "tool", text: `[tool_result] ${clip(t, MAX_TOOL_TEXT)}` };
+        out.push(tool);
+        fallback.push(tool);
+      } else if (p.type === "message" && (p.role === "user" || p.role === "assistant")) {
+        const text = codexMessageText(p.content);
+        if (text.trim() && !(p.role === "user" && text.trimStart().startsWith("<")))
+          fallback.push({ role: p.role, text });
+      }
+    }
+  }
+  return sawEventText ? out : fallback;
+}
+function renderCodexTranscript(jsonl, lastAssistantMessage) {
+  const blocks = codexBlocks(jsonl).filter((b) => b.text.trim());
+  const last = lastAssistantMessage?.trim() ? lastAssistantMessage : null;
+  if (last) {
+    const tail = [...blocks].reverse().find((b) => b.role !== "tool");
+    if (!(tail?.role === "assistant" && tail.text.trim() === last.trim()))
+      blocks.push({ role: "assistant", text: last });
+  }
+  return blocks.map(blockLine).join("\n");
+}
 function capRedacted(text, maxChars) {
   const r = redact(text);
   return r.length > maxChars ? r.slice(r.length - maxChars) : r;
 }
 function renderTranscriptTail(jsonl, maxChars, partial, opts = {}) {
   const text = partial ? jsonl.slice(jsonl.indexOf("\n") + 1) : jsonl;
-  const rendered = opts.runtime === "grok_build" ? renderGrokTranscript(text, opts.lastAssistantMessage) : renderTranscript(text);
+  const rendered = opts.runtime === "grok_build" ? renderGrokTranscript(text, opts.lastAssistantMessage) : opts.runtime === "codex" ? renderCodexTranscript(text, opts.lastAssistantMessage) : renderTranscript(text);
   return capRedacted(rendered, maxChars);
 }
 
@@ -4784,11 +4861,12 @@ var ContextListSchema = external_exports.array(external_exports.object({
 }));
 
 // ../shared/dist/esm/model-settings.js
-var MODEL_PROVIDERS = ["anthropic", "bedrock", "xai"];
+var MODEL_PROVIDERS = ["anthropic", "bedrock", "xai", "openai"];
 var MODEL_PROVIDER_LABEL = {
   anthropic: "Claude API",
   bedrock: "AWS Bedrock",
-  xai: "xAI Grok"
+  xai: "xAI Grok",
+  openai: "OpenAI API"
 };
 var MODEL_PROVIDER_INFO = {
   anthropic: {
@@ -4810,6 +4888,13 @@ var MODEL_PROVIDER_INFO = {
     keyHelpUrl: "https://console.x.ai",
     keyPlaceholder: "xai-\u2026",
     note: "Use your own xAI API key. Cards can take longer."
+  },
+  openai: {
+    label: MODEL_PROVIDER_LABEL.openai,
+    keyLabel: "OpenAI API key",
+    keyHelpUrl: "https://platform.openai.com/api-keys",
+    keyPlaceholder: "sk-\u2026",
+    note: "Use your own OpenAI API key."
   }
 };
 var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
@@ -4825,6 +4910,10 @@ var AnthropicSettings = external_exports.object({
 var XaiSettings = external_exports.object({
   provider: external_exports.literal("xai"),
   apiKey: external_exports.string().trim().min(20, "Paste the whole xAI API key").max(500, "Paste the whole xAI API key")
+}).strict();
+var OpenAiSettings = external_exports.object({
+  provider: external_exports.literal("openai"),
+  apiKey: external_exports.string().trim().min(20, "Paste the whole OpenAI API key").max(500, "Paste the whole OpenAI API key")
 }).strict();
 var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
   external_exports.object({
@@ -4848,7 +4937,12 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     awsProfile: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(AWS_PROFILE_PATTERN, "Use letters, digits and - _ . @ + only").optional())
   }).strict()
 ]);
-var SaveModelSettingsBody = external_exports.union([AnthropicSettings, BedrockSettings, XaiSettings]);
+var SaveModelSettingsBody = external_exports.union([
+  AnthropicSettings,
+  BedrockSettings,
+  XaiSettings,
+  OpenAiSettings
+]);
 function defaultBedrockAuth(v) {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     const o = v;
@@ -5007,15 +5101,29 @@ var WaitlistEntryDtoSchema = external_exports.object({
   decidedAt: external_exports.string().nullable(),
   /** Null when no invite was made (or it was deleted). */
   inviteState: WaitlistInviteStateSchema.nullable(),
-  inviteExpiresAt: external_exports.string().nullable()
+  inviteExpiresAt: external_exports.string().nullable(),
+  /** When Reconnect emailed the current invite (Send invite). Null: not sent by Reconnect. */
+  inviteSentAt: external_exports.string().nullable().default(null),
+  /** When the person used the invite. */
+  inviteUsedAt: external_exports.string().nullable().default(null),
+  /** GitHub login of the person who used the invite. Null when it is not used. */
+  inviteUsedByLogin: external_exports.string().nullable().default(null),
+  /** Latest activity of that person (browser session or connected computer). Null when none. */
+  lastActiveAt: external_exports.string().nullable().default(null)
 });
 var WaitlistPageSchema = external_exports.object({
   entries: external_exports.array(WaitlistEntryDtoSchema),
   /** Pass as `cursor` to get the next page. Null on the last page. */
-  nextCursor: external_exports.string().nullable()
+  nextCursor: external_exports.string().nullable(),
+  /** True when the server can send the invitation email (Send invite). */
+  mailEnabled: external_exports.boolean().default(false)
 });
 var WaitlistInviteResponseSchema = external_exports.object({
   url: external_exports.string(),
+  expiresAt: external_exports.string()
+});
+var WaitlistSendInviteResponseSchema = external_exports.object({
+  sentAt: external_exports.string(),
   expiresAt: external_exports.string()
 });
 
@@ -5084,8 +5192,8 @@ var Deadline = class {
 // src/stdin.ts
 var MAX_BYTES = 1024 * 1024;
 function readStdin(timeoutMs, stream = process.stdin) {
-  return new Promise((resolve) => {
-    if (stream.isTTY) return resolve("");
+  return new Promise((resolve2) => {
+    if (stream.isTTY) return resolve2("");
     const chunks = [];
     let size = 0;
     const done = () => {
@@ -5094,7 +5202,7 @@ function readStdin(timeoutMs, stream = process.stdin) {
       stream.removeAllListeners("end");
       stream.removeAllListeners("error");
       stream.pause();
-      resolve(Buffer.concat(chunks).toString("utf8"));
+      resolve2(Buffer.concat(chunks).toString("utf8"));
     };
     const timer = setTimeout(done, timeoutMs);
     stream.on("data", (c) => {
@@ -5206,25 +5314,25 @@ async function connect(opts, deps) {
   const state = b64url(randomBytes(16));
   const server = createServer();
   server.listen(0, "127.0.0.1");
-  await new Promise((resolve, reject) => {
-    server.once("listening", resolve);
+  await new Promise((resolve2, reject) => {
+    server.once("listening", resolve2);
     server.once("error", reject);
   });
   const port = server.address().port;
   const redirectUri = `http://127.0.0.1:${port}/callback`;
   let timer;
-  const outcome = await new Promise((resolve) => {
+  const outcome = await new Promise((resolve2) => {
     let done = false;
     const finish = (res, o, html, status2 = 200) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      if (!res) return resolve(o);
+      if (!res) return resolve2(o);
       res.writeHead(status2, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store"
       });
-      res.end(html, () => resolve(o));
+      res.end(html, () => resolve2(o));
     };
     timer = setTimeout(
       () => finish(null, { code: 1, message: MSG.timedOut }, ""),
@@ -5283,7 +5391,7 @@ async function connect(opts, deps) {
     }
   });
   server.closeAllConnections();
-  await new Promise((resolve) => server.close(() => resolve()));
+  await new Promise((resolve2) => server.close(() => resolve2()));
   if (outcome.code === 1) {
     out(outcome.message + "\n");
     return 1;
@@ -5297,7 +5405,7 @@ async function connect(opts, deps) {
 // src/commands/emit.ts
 import { spawn as spawn2 } from "node:child_process";
 import { appendFileSync as appendFileSync3, existsSync, readFileSync as readFileSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 
 // src/envelope.ts
 import { randomUUID } from "node:crypto";
@@ -5363,16 +5471,16 @@ function remoteOf(raw) {
   return r ? `${r.host}/${r.path}` : null;
 }
 function git(cwd, args, timeoutMs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     try {
       execFile(
         "git",
         args,
         { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 },
-        (err, stdout) => resolve(err ? null : stdout.trim())
+        (err, stdout) => resolve2(err ? null : stdout.trim())
       );
     } catch {
-      resolve(null);
+      resolve2(null);
     }
   });
 }
@@ -5555,12 +5663,36 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
 }
 
 // src/runtime.ts
+import { homedir as homedir2 } from "node:os";
+import { join as join4, resolve, sep } from "node:path";
 var isGrokEnv = (env) => !!(env.GROK_HOOK_EVENT || env.GROK_SESSION_ID);
+var codexHome = (env) => env.CODEX_HOME || join4(homedir2(), ".codex");
+function isCodexRun(raw, env, hint) {
+  if (isGrokEnv(env)) return false;
+  if (hint === "codex") return true;
+  const path = typeof raw.transcript_path === "string" ? raw.transcript_path : "";
+  if (!path) return false;
+  try {
+    return resolve(path).startsWith(resolve(codexHome(env)) + sep);
+  } catch {
+    return false;
+  }
+}
+var CODEX_START_SOURCE = { fork: "startup" };
+var CODEX_PERMISSION_MAX = 200;
 var str3 = (v) => typeof v === "string" && v.length > 0 ? v : null;
 var has = (o, k) => o[k] !== void 0 && o[k] !== null;
 var GROK_START_SOURCE = { new: "startup", load: "resume" };
-function normalizeHookInput(raw, env, event) {
+function normalizeHookInput(raw, env, event, opts = {}) {
   const camelOnly = (has(raw, "sessionId") || has(raw, "hookEventName")) && !has(raw, "session_id");
+  if (!camelOnly && isCodexRun(raw, env, opts.runtimeHint)) return normalizeCodex(raw, event, opts);
+  if (opts.permissionRequest)
+    return {
+      runtime: isGrokEnv(env) || camelOnly ? "grok_build" : "claude_code",
+      input: raw,
+      lastAssistantMessage: null,
+      skip: "PermissionRequest outside Codex"
+    };
   if (!isGrokEnv(env) && !camelOnly)
     return { runtime: "claude_code", input: raw, lastAssistantMessage: null, skip: null };
   const input = {
@@ -5611,6 +5743,27 @@ function grokSkip(event, raw) {
   if (event === "SessionEnd" && str3(raw.subagentType)) return "SessionEnd of a subagent";
   return null;
 }
+function normalizeCodex(raw, event, opts) {
+  const input = { ...raw };
+  let skip = null;
+  if (event === "SessionStart") {
+    const s = str3(raw.source);
+    if (s && CODEX_START_SOURCE[s]) input.source = CODEX_START_SOURCE[s];
+  } else if (event === "UserPromptSubmit" && str3(raw.agent_id)) {
+    skip = "UserPromptSubmit of a subagent";
+  } else if (event === "Notification" && opts.permissionRequest) {
+    const tool = raw.tool_input && typeof raw.tool_input === "object" ? raw.tool_input : {};
+    const what = str3(tool.description) ?? str3(raw.tool_name) ?? "a tool";
+    input.message = `Codex needs your approval: ${what}`.slice(0, CODEX_PERMISSION_MAX);
+    input.notification_type = "permission_prompt";
+  }
+  return {
+    runtime: "codex",
+    input,
+    lastAssistantMessage: str3(raw.last_assistant_message),
+    skip
+  };
+}
 
 // src/transcript-tail.ts
 import { open } from "node:fs/promises";
@@ -5640,8 +5793,8 @@ async function readTail(path, opts = {}) {
 }
 function readTailWithin(path, timeoutMs, opts = {}) {
   let timer;
-  const late2 = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(null), timeoutMs);
+  const late2 = new Promise((resolve2) => {
+    timer = setTimeout(() => resolve2(null), timeoutMs);
     timer.unref();
   });
   return Promise.race([readTail(path, opts), late2]).finally(() => clearTimeout(timer));
@@ -5653,7 +5806,7 @@ var GIT_TIMEOUT_MS = 500;
 var TAIL_TIMEOUT_MS = 300;
 var QUICK_GIT_TIMEOUT_MS = 300;
 var TOKEN_REFUSED = "Token refused. Run /reconnect:connect.";
-var refusedMarker = (home) => join4(home, "token-refused");
+var refusedMarker = (home) => join5(home, "token-refused");
 function makeSender(cfg, deadline) {
   return async (item) => {
     if (deadline.remaining() < 50) return false;
@@ -5708,7 +5861,10 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
     return;
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
-  const { runtime, input, lastAssistantMessage, skip } = normalizeHookInput(raw, env, event);
+  const { runtime, input, lastAssistantMessage, skip } = normalizeHookInput(raw, env, event, {
+    runtimeHint: opts.runtimeHint,
+    permissionRequest: opts.permissionRequest
+  });
   if (skip) return;
   if (event === "UserPromptSubmit" && isInjectedPrompt(input.prompt)) return;
   const queueOnly = event === "SessionEnd";
@@ -5740,8 +5896,11 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
       deadline.cap(TAIL_TIMEOUT_MS),
       { runtime, lastAssistantMessage }
     );
-    if (runtime === "grok_build" && envelope.transcriptTail === null) {
-      log(cfg.home, `emit ${event}: Grok Build session file not readable, sent the last answer`);
+    if (runtime !== "claude_code" && !envelope.transcriptTail) {
+      log(
+        cfg.home,
+        `emit ${event}: ${RUNTIME_LABEL[runtime]} session file not readable, sent the last answer`
+      );
       envelope.transcriptTail = lastAssistantMessage ? capRedacted(`assistant: ${lastAssistantMessage}`, TRANSCRIPT_TAIL_MAX_CHARS) : null;
     }
   }
@@ -5778,8 +5937,8 @@ import {
   renameSync as renameSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname, join as join5 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { dirname, join as join6 } from "node:path";
 
 // src/hook-commands.ts
 function hookArgs() {
@@ -5791,7 +5950,7 @@ function hookArgs() {
 
 // src/commands/install.ts
 var PLUGIN_TIP = "Tip: the Claude Code plugin is easier and updates itself. See docs/HOOKS.md.\n";
-var settingsPath = () => join5(homedir2(), ".claude", "settings.json");
+var settingsPath = () => join6(homedir3(), ".claude", "settings.json");
 function wantedCommands(bin) {
   const out = {};
   for (const [event, list] of Object.entries(hookArgs()))
@@ -5912,11 +6071,13 @@ async function status(cfg, out) {
 
 // src/commands/inject-card.ts
 var MAX_CARD_CHARS = 4e3;
-async function injectCard(rawInput, cfg, deadline, out, env = process.env) {
+async function injectCard(rawInput, cfg, deadline, out, env = process.env, runtimeHint = null) {
   let cwd = process.cwd();
   let sessionId = null;
   try {
     const input = JSON.parse(rawInput || "{}");
+    if (input && typeof input === "object" && isCodexRun(input, env, runtimeHint) && !["startup", "resume"].includes(String(input.source)))
+      return;
     if (typeof input.cwd === "string" && input.cwd) cwd = input.cwd;
     if (typeof input.session_id === "string" && input.session_id) sessionId = input.session_id;
   } catch {
@@ -5998,12 +6159,12 @@ function uninstall(extraBin, out, file = settingsPath()) {
 
 // src/plugin-guard.ts
 import { readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join6 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { join as join7 } from "node:path";
 var PLUGIN_ID = "reconnect@reconnect-plugins";
 var MAX_FILE_BYTES = 1024 * 1024;
-var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join6(homedir3(), ".claude");
-var grokHome = (env) => env.GROK_HOME || join6(homedir3(), ".grok");
+var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join7(homedir4(), ".claude");
+var grokHome = (env) => env.GROK_HOME || join7(homedir4(), ".grok");
 function readJson(file) {
   const text = readFileSync5(file, "utf8");
   if (text.length > MAX_FILE_BYTES) throw new Error("too big");
@@ -6018,7 +6179,7 @@ function hasReconnectKey(v, depth = 0) {
 }
 function grokPluginInstalled(env = process.env) {
   try {
-    const reg = readJson(join6(grokHome(env), "installed-plugins", "registry.json"));
+    const reg = readJson(join7(grokHome(env), "installed-plugins", "registry.json"));
     return Object.values(reg?.repos ?? {}).some(
       (r) => Object.keys(r?.plugins ?? {}).includes("reconnect")
     );
@@ -6029,11 +6190,11 @@ function grokPluginInstalled(env = process.env) {
 function pluginActive(env = process.env) {
   try {
     const dir = claudeDir(env);
-    const installed = readJson(join6(dir, "plugins", "installed_plugins.json"));
+    const installed = readJson(join7(dir, "plugins", "installed_plugins.json"));
     if (!hasReconnectKey(installed?.plugins)) return false;
     let settings = {};
     try {
-      settings = readJson(join6(dir, "settings.json"));
+      settings = readJson(join7(dir, "settings.json"));
     } catch {
     }
     return settings?.enabledPlugins?.[PLUGIN_ID] !== false;
@@ -6045,7 +6206,7 @@ function skipLegacyRun(home, env = process.env) {
   if (env.CLAUDE_PLUGIN_ROOT || env.GROK_PLUGIN_ROOT) return false;
   if (!pluginActive(env) && !(isGrokEnv(env) && grokPluginInstalled(env))) return false;
   const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const mark = join6(home, "legacy-skip.day");
+  const mark = join7(home, "legacy-skip.day");
   let last = "";
   try {
     last = readFileSync5(mark, "utf8").trim();
@@ -6071,9 +6232,12 @@ var STDIN_TIMEOUT_MS = 300;
 var USAGE = `reconnect <command>
 
 Commands:
-  emit <event>         Read Claude Code or Grok Build hook JSON on stdin and send it to Reconnect.
-                       <event>: ${HOOK_EVENTS.join(" | ")}
-  inject-card          Print the lane card to stdout (use on SessionStart; Claude Code only).
+  emit <event> [--runtime codex]
+                       Read Claude Code, Grok Build or Codex hook JSON on stdin and send it to
+                       Reconnect. <event>: ${HOOK_EVENTS.join(" | ")}
+                       Codex also sends PermissionRequest (stored as a Notification).
+  inject-card [--runtime codex]
+                       Print the lane card to stdout (use on SessionStart; not for Grok Build).
   install [--bin X]    Add the hooks to ~/.claude/settings.json (X = command, default "reconnect").
                        The Claude Code plugin is easier and updates itself (docs/HOOKS.md).
   uninstall [--bin X]  Remove the hooks that install added from ~/.claude/settings.json.
@@ -6082,11 +6246,23 @@ Commands:
                        Connect this computer: sign in in the browser, then save a device token.
   status               Show the address, where the token comes from, and check both.
 `;
+function runtimeArg(args) {
+  const i = args.indexOf("--runtime");
+  const v = i >= 0 ? args[i + 1] : void 0;
+  return v ? { runtime: v } : {};
+}
 function parseArgs(argv) {
   const [cmd, arg, val] = argv;
   switch (cmd) {
     case "emit":
-      return HOOK_EVENTS.includes(arg ?? "") ? { name: "emit", event: arg } : { name: "emit-unknown", event: arg ?? "" };
+      if (arg === "PermissionRequest")
+        return {
+          name: "emit",
+          event: "Notification",
+          permissionRequest: true,
+          ...runtimeArg(argv.slice(2))
+        };
+      return HOOK_EVENTS.includes(arg ?? "") ? { name: "emit", event: arg, ...runtimeArg(argv.slice(2)) } : { name: "emit-unknown", event: arg ?? "" };
     case "install":
       return { name: "install", bin: arg === "--bin" && val ? val : "reconnect" };
     case "uninstall":
@@ -6104,6 +6280,7 @@ function parseArgs(argv) {
       return out;
     }
     case "inject-card":
+      return { name: "inject-card", ...runtimeArg(argv.slice(1)) };
     case "flush":
     case "status":
       return { name: cmd };
@@ -6122,7 +6299,9 @@ async function main(argv) {
         const deadline = new Deadline(quick ? GROK_SESSION_END_BUDGET_MS : HOOK_BUDGET_MS);
         if (skipLegacyRun(cfg.home)) return 0;
         await emit(cmd.event, await readStdin(STDIN_TIMEOUT_MS), cfg, deadline, process.env, {
-          cliPath: process.argv[1]
+          cliPath: process.argv[1],
+          runtimeHint: cmd.runtime,
+          permissionRequest: cmd.permissionRequest
         });
         return 0;
       }
@@ -6133,7 +6312,14 @@ async function main(argv) {
         if (isGrokEnv(process.env)) return 0;
         const deadline = new Deadline(HOOK_BUDGET_MS);
         if (skipLegacyRun(cfg.home)) return 0;
-        await injectCard(await readStdin(STDIN_TIMEOUT_MS), cfg, deadline, stdout);
+        await injectCard(
+          await readStdin(STDIN_TIMEOUT_MS),
+          cfg,
+          deadline,
+          stdout,
+          process.env,
+          cmd.runtime ?? null
+        );
         return 0;
       }
       case "install":
