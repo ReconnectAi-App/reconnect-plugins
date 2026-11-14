@@ -1,8 +1,8 @@
 {
   "name": "reconnect",
   "displayName": "Reconnect",
-  "version": "1.7.0",
-  "description": "Sends your Claude Code and Grok Build session events to Reconnect, so you can get back into any lane in about 30 seconds. Never blocks your coding agent.",
+  "version": "1.8.0",
+  "description": "Sends your Claude Code, Grok Build and Codex session events to Reconnect, so you can get back into any lane in about 30 seconds. Never blocks your coding agent.",
   "author": {
     "name": "Andres Carmona"
   },
