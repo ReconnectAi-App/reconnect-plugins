@@ -4111,6 +4111,12 @@ var DistilledCardSchema = external_exports.object({
   path: ["needsFromMe"]
 });
 
+// ../shared/dist/esm/open-link.js
+var OPEN_APPS = ["claude", "vscode", "codex"];
+var OpenLinkSchema = external_exports.object({ app: external_exports.enum(OPEN_APPS), url: external_exports.string() });
+var REMOTE_SESSION_ID_RE = /^cse_([A-Za-z0-9]{1,100})$/;
+var ENTRYPOINT_RE = /^[a-z0-9_-]{1,40}$/;
+
 // ../shared/dist/esm/runtimes.js
 var RUNTIMES = ["claude_code", "grok_build", "codex"];
 var RUNTIME_LABEL = {
@@ -4439,6 +4445,18 @@ var EventEnvelopeSchema = external_exports.object({
    * the lane (SPEC-v2 V2-F14). Missing = older hooks or no main session = no link.
    */
   parentSessionId: external_exports.string().min(1).max(200).nullable().optional(),
+  /**
+   * Claude Code cloud sessions only (hooks 1.10.0+, SPEC-v2 V2-F27): `CLAUDE_CODE_REMOTE_SESSION_ID`
+   * when `CLAUDE_CODE_REMOTE=true`. The API builds the "Open in Claude" link from it. Missing =
+   * older hooks or not a cloud session.
+   */
+  remoteSessionId: external_exports.string().regex(REMOTE_SESSION_ID_RE).nullable().optional(),
+  /**
+   * Claude Code only (hooks 1.10.0+, SPEC-v2 V2-F27): where the session runs, from
+   * `CLAUDE_CODE_ENTRYPOINT` in lower case (`cli`, `claude-vscode`, `remote_projects`, …).
+   * Missing = older hooks or no value.
+   */
+  entrypoint: external_exports.string().regex(ENTRYPOINT_RE).nullable().optional(),
   transcriptPath: external_exports.string().min(1).nullable(),
   cwd: external_exports.string().min(1),
   lane: external_exports.object({
@@ -4715,8 +4733,13 @@ var LaneProcessSchema = external_exports.object({
   lastEventAt: iso,
   endedAt: iso.nullable(),
   running: external_exports.boolean(),
-  /** Shell command that resumes the session. null for subagents and humans. */
+  /**
+   * Shell command that resumes the session. null for subagents and humans, and for a Claude Code
+   * cloud session (its folder is not on the user's computer; SPEC-v2 V2-F27).
+   */
   resumeCommand: external_exports.string().nullable(),
+  /** Link that opens this session in its app (SPEC-v2 V2-F27). null = none; missing = older API. */
+  openLink: OpenLinkSchema.nullable().optional(),
   /** Coding agent of this process. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
   /** Subagents: the helper title ("Explore helper", SPEC-v2 V2-F14). Missing = older API. */
@@ -4764,6 +4787,11 @@ var LaneDetailSchema = external_exports.object({
   processes: external_exports.array(LaneProcessSchema),
   /** Resume command of the newest session, for the "Copy resume command" action. */
   resumeCommand: external_exports.string().nullable(),
+  /**
+   * "Open in <app>" link of the newest session (the one that gives resumeCommand; SPEC-v2 V2-F27).
+   * null = none; missing = older API.
+   */
+  openLink: OpenLinkSchema.nullable().optional(),
   /** The lane has Claude Code sessions and all of them are closed (SessionEnd). */
   sessionClosed: external_exports.boolean(),
   /** Newest session close time when sessionClosed, else null. */
@@ -5501,6 +5529,16 @@ function pickDetail(event, input) {
   }
   return out;
 }
+function claudeEnvFields(e) {
+  if (!e) return {};
+  const out = {};
+  const remoteId = typeof e.remoteSessionId === "string" ? e.remoteSessionId.trim() : "";
+  if (e.remote?.trim().toLowerCase() === "true" && REMOTE_SESSION_ID_RE.test(remoteId))
+    out.remoteSessionId = remoteId;
+  const entry = typeof e.entrypoint === "string" ? e.entrypoint.trim().toLowerCase() : "";
+  if (ENTRYPOINT_RE.test(entry)) out.entrypoint = entry;
+  return out;
+}
 function buildEnvelope(a) {
   const sessionId = str2(a.input.session_id);
   if (!sessionId) return null;
@@ -5508,7 +5546,8 @@ function buildEnvelope(a) {
   const detail = pickDetail(a.event, a.input);
   const agentId = SUBAGENT_EVENTS.includes(a.event) ? str2(a.input.agent_id) : null;
   const { repoRemote = null, ...git2 } = a.git ?? {};
-  const parent = (a.runtime ?? "claude_code") === "claude_code" ? a.parentSession?.trim() : "";
+  const isClaude = (a.runtime ?? "claude_code") === "claude_code";
+  const parent = isClaude ? a.parentSession?.trim() : "";
   const parentSessionId = parent && parent !== sessionId && parent.length <= MAX_PARENT_SESSION ? parent : null;
   return {
     v: 1,
@@ -5528,6 +5567,7 @@ function buildEnvelope(a) {
     git: a.git ? git2 : null,
     ...repoRemote ? { repoRemote } : {},
     ...parentSessionId ? { parentSessionId } : {},
+    ...isClaude ? claudeEnvFields(a.claudeEnv) : {},
     detail
   };
 }
@@ -5989,7 +6029,12 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
     envLane: env.LANE,
     fallbackCwd: cwd,
     runtime,
-    parentSession: env[PARENT_SESSION_ENV]
+    parentSession: env[PARENT_SESSION_ENV],
+    claudeEnv: {
+      remote: env.CLAUDE_CODE_REMOTE,
+      remoteSessionId: env.CLAUDE_CODE_REMOTE_SESSION_ID,
+      entrypoint: env.CLAUDE_CODE_ENTRYPOINT
+    }
   });
   if (!envelope) {
     log(cfg.home, `emit ${event}: no session_id, skipped`);
