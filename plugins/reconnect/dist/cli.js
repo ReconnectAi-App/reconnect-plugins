@@ -5512,7 +5512,8 @@ async function readGit(cwd, timeoutMs) {
 function headers(cfg, extra = {}) {
   return { ...extra, ...cfg.token ? { authorization: `Bearer ${cfg.token}` } : {} };
 }
-async function postJson(cfg, path, body, timeoutMs) {
+var ANSWER_LOG_MAX = 300;
+async function postJson(cfg, path, body, timeoutMs, onRefusal) {
   try {
     const res = await fetch(cfg.url + path, {
       method: "POST",
@@ -5520,10 +5521,17 @@ async function postJson(cfg, path, body, timeoutMs) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs)
     });
+    if ([400, 413, 422].includes(res.status)) {
+      const answer = await res.text().catch(() => "");
+      onRefusal?.({
+        status: res.status,
+        answer: answer.replace(/\s+/g, " ").trim().slice(0, ANSWER_LOG_MAX)
+      });
+      return "drop";
+    }
     await res.body?.cancel().catch(() => void 0);
     if (res.ok) return "ok";
-    if (res.status === 401) return "unauthorized";
-    return [400, 413, 422].includes(res.status) ? "drop" : "retry";
+    return res.status === 401 ? "unauthorized" : "retry";
   } catch {
     return "retry";
   }
@@ -5810,9 +5818,17 @@ var refusedMarker = (home) => join5(home, "token-refused");
 function makeSender(cfg, deadline) {
   return async (item) => {
     if (deadline.remaining() < 50) return false;
-    const r = await postJson(cfg, "/events", item, deadline.cap(NETWORK_TIMEOUT_MS));
-    if (r === "drop")
-      log(cfg.home, `dropped event rejected by API: ${JSON.stringify(item).slice(0, 200)}`);
+    let refusal = null;
+    const r = await postJson(cfg, "/events", item, deadline.cap(NETWORK_TIMEOUT_MS), (x) => {
+      refusal = x;
+    });
+    if (r === "drop") {
+      const why = refusal;
+      log(
+        cfg.home,
+        `dropped event rejected by API at ${cfg.url}` + (why ? ` (${why.status}): ${redact(why.answer)}` : "") + `; event: ${JSON.stringify(item).slice(0, 200)}`
+      );
+    }
     try {
       if (r === "unauthorized" && !existsSync(refusedMarker(cfg.home))) {
         log(cfg.home, `${TOKEN_REFUSED} (API at ${cfg.url} answered 401; events stay queued)`);
