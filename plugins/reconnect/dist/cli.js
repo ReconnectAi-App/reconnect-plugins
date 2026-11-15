@@ -4395,6 +4395,20 @@ function renderTranscriptTail(jsonl, maxChars, partial, opts = {}) {
   const rendered = opts.runtime === "grok_build" ? renderGrokTranscript(text, opts.lastAssistantMessage) : opts.runtime === "codex" ? renderCodexTranscript(text, opts.lastAssistantMessage) : renderTranscript(text);
   return capRedacted(rendered, maxChars);
 }
+function dropUserMessages(tail) {
+  const kept = [];
+  let inUser = false;
+  for (const line of tail.split("\n")) {
+    if (line.startsWith("user: "))
+      inUser = true;
+    else if (line.startsWith("assistant: ") || line.startsWith("[tool_"))
+      inUser = false;
+    if (!inUser)
+      kept.push(line);
+  }
+  const out = kept.join("\n");
+  return out.trim() ? out : "";
+}
 
 // ../shared/dist/esm/events.js
 var HOOK_EVENTS = [
@@ -4574,8 +4588,18 @@ var CloseLaneSchema = external_exports.object({
   /** Also close the lane's active helper lanes (SPEC-v2 V2-F14). Missing = true. */
   withHelpers: external_exports.boolean().optional()
 }).strict();
+var PrivacyPatchSchema = external_exports.object({ saveTypedMessages: external_exports.boolean() }).strict();
 var CloseAllLanesResponseSchema = external_exports.object({ closed: external_exports.number().int().nonnegative() });
 var iso = external_exports.string().datetime({ offset: true });
+var PrivacySettingsSchema = external_exports.object({ saveTypedMessages: external_exports.boolean() });
+var DeleteTypedMessagesResultSchema = external_exports.object({
+  deleted: external_exports.number().int().nonnegative()
+});
+var EventIngestResponseSchema = external_exports.object({
+  laneId: external_exports.string(),
+  processId: external_exports.string(),
+  saveTypedMessages: external_exports.boolean().optional()
+});
 var SUMMARY_STATUSES = ["updating", "failed", "off"];
 var SUMMARY_FAILURES = ["sign_in", "error"];
 var SummaryStatusSchema = external_exports.object({
@@ -5131,19 +5155,55 @@ var WaitlistSendInviteResponseSchema = external_exports.object({
 var JIRA_RE = new RegExp(`(?<![A-Za-z0-9-])${TICKET_KEY_RE.source}(?![\\w-])`, "g");
 
 // src/config.ts
-import { readFileSync } from "node:fs";
+import { readFileSync as readFileSync2 } from "node:fs";
 import { homedir } from "node:os";
+import { join as join2 } from "node:path";
+
+// src/account.ts
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+var accountFile = (home) => join(home, "account.json");
+var ANSWER_READ_MAX = 2e3;
+function readSaveTypedMessages(home) {
+  try {
+    const v = JSON.parse(readFileSync(accountFile(home), "utf8"));
+    const s = v && typeof v === "object" ? v.saveTypedMessages : null;
+    return typeof s === "boolean" ? s : null;
+  } catch {
+    return null;
+  }
+}
+function rememberAccount(home, body) {
+  let tmp = null;
+  try {
+    const v = JSON.parse(body);
+    const s = v && typeof v === "object" ? v.saveTypedMessages : null;
+    if (typeof s !== "boolean" || readSaveTypedMessages(home) === s) return;
+    const file = accountFile(home);
+    tmp = `${file}.${process.pid}.tmp`;
+    const text = JSON.stringify({ saveTypedMessages: s, checkedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    writeFileSync(tmp, text + "\n", { mode: 384 });
+    renameSync(tmp, file);
+  } catch {
+    if (tmp)
+      try {
+        unlinkSync(tmp);
+      } catch {
+      }
+  }
+}
+
+// src/config.ts
 var DEFAULT_URL = "https://api.reconnect-ai.me";
 var OLD_DEFAULT_URLS = ["http://localhost:4317"];
 var isDefaultUrl = (u) => u === DEFAULT_URL || OLD_DEFAULT_URLS.includes(u);
 var str = (v) => typeof v === "string" && v.trim() ? v.trim() : null;
 var noSlash = (u) => u.replace(/\/+$/, "");
-var configFile = (home) => join(home, "config.json");
-var stateHome = (env = process.env) => env.RECONNECT_HOME || join(homedir(), ".reconnect");
+var configFile = (home) => join2(home, "config.json");
+var stateHome = (env = process.env) => env.RECONNECT_HOME || join2(homedir(), ".reconnect");
 function readConfigFile(home) {
   try {
-    const v = JSON.parse(readFileSync(configFile(home), "utf8"));
+    const v = JSON.parse(readFileSync2(configFile(home), "utf8"));
     return v && typeof v === "object" && !Array.isArray(v) ? v : {};
   } catch {
     return {};
@@ -5170,8 +5230,16 @@ function loadConfig(env = process.env) {
     deviceId: str(file.deviceId),
     home,
     sendTranscriptTail: (str(env.RECONNECT_SEND_TRANSCRIPT_TAIL) ?? str(file.sendTranscriptTail) ?? "on").toLowerCase() !== "off",
-    sendPrompt: (str(env.RECONNECT_SEND_PROMPT) ?? str(file.sendPrompt) ?? "on").toLowerCase() !== "off"
+    ...sendPromptOf(env, file, home)
   };
+}
+function sendPromptOf(env, file, home) {
+  const off = [];
+  if (readSaveTypedMessages(home) === false) off.push("account");
+  const local = str(env.RECONNECT_SEND_PROMPT) ? "env" : str(file.sendPrompt) ? "file" : null;
+  const value = str(env.RECONNECT_SEND_PROMPT) ?? str(file.sendPrompt) ?? "on";
+  if (local && value.toLowerCase() === "off") off.push(local);
+  return { sendPrompt: off.length === 0, sendPromptOff: off };
 }
 
 // src/deadline.ts
@@ -5218,7 +5286,7 @@ function readStdin(timeoutMs, stream = process.stdin) {
 // src/commands/connect.ts
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
 var CONNECT_TIMEOUT_MS = 5 * 6e4;
@@ -5279,9 +5347,9 @@ function saveDevice(home, url, token, deviceId) {
   const next = { ...readConfigFile(home), url, token, deviceId };
   const file = configFile(home);
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 384 });
+  writeFileSync2(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 384 });
   chmodSync(tmp, 384);
-  renameSync(tmp, file);
+  renameSync2(tmp, file);
 }
 async function healthy(apiUrl) {
   try {
@@ -5404,8 +5472,8 @@ async function connect(opts, deps) {
 
 // src/commands/emit.ts
 import { spawn as spawn2 } from "node:child_process";
-import { appendFileSync as appendFileSync3, existsSync, readFileSync as readFileSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { appendFileSync as appendFileSync3, existsSync, readFileSync as readFileSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // src/envelope.ts
 import { randomUUID } from "node:crypto";
@@ -5513,7 +5581,24 @@ function headers(cfg, extra = {}) {
   return { ...extra, ...cfg.token ? { authorization: `Bearer ${cfg.token}` } : {} };
 }
 var ANSWER_LOG_MAX = 300;
-async function postJson(cfg, path, body, timeoutMs, onRefusal) {
+async function readStart(res, max) {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (text.length < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } catch {
+  } finally {
+    await reader.cancel().catch(() => void 0);
+  }
+  return text.slice(0, max);
+}
+async function postJson(cfg, path, body, timeoutMs, onRefusal, onAnswer) {
   try {
     const res = await fetch(cfg.url + path, {
       method: "POST",
@@ -5528,6 +5613,10 @@ async function postJson(cfg, path, body, timeoutMs, onRefusal) {
         answer: answer.replace(/\s+/g, " ").trim().slice(0, ANSWER_LOG_MAX)
       });
       return "drop";
+    }
+    if (res.ok && onAnswer) {
+      onAnswer.read(await readStart(res, onAnswer.max));
+      return "ok";
     }
     await res.body?.cancel().catch(() => void 0);
     if (res.ok) return "ok";
@@ -5553,15 +5642,15 @@ async function getText(cfg, path, timeoutMs) {
 }
 
 // src/log.ts
-import { appendFileSync, mkdirSync as mkdirSync2, renameSync as renameSync2, statSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync2, renameSync as renameSync3, statSync } from "node:fs";
+import { join as join3 } from "node:path";
 var MAX_LOG = 1024 * 1024;
 function log(home, msg) {
   try {
     mkdirSync2(home, { recursive: true, mode: 448 });
-    const file = join2(home, "hooks.log");
+    const file = join3(home, "hooks.log");
     try {
-      if (statSync(file).size > MAX_LOG) renameSync2(file, `${file}.1`);
+      if (statSync(file).size > MAX_LOG) renameSync3(file, `${file}.1`);
     } catch {
     }
     appendFileSync(file, `${(/* @__PURE__ */ new Date()).toISOString()} ${msg}
@@ -5575,18 +5664,18 @@ import {
   appendFileSync as appendFileSync2,
   mkdirSync as mkdirSync3,
   readdirSync,
-  readFileSync as readFileSync2,
-  renameSync as renameSync3,
+  readFileSync as readFileSync3,
+  renameSync as renameSync4,
   statSync as statSync2,
-  unlinkSync,
-  writeFileSync as writeFileSync2
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync3
 } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var QUEUE_MAX_LINES = 5e3;
 var QUEUE_MAX_BYTES = 5 * 1024 * 1024;
 var FLUSH_BATCH = 50;
 var STALE_FLUSH_MS = 6e4;
-var queueFile = (home) => join3(home, "queue.jsonl");
+var queueFile = (home) => join4(home, "queue.jsonl");
 function ensureHome(home) {
   mkdirSync3(home, { recursive: true, mode: 448 });
 }
@@ -5603,7 +5692,7 @@ function capLines(lines, maxLines = QUEUE_MAX_LINES, maxBytes = QUEUE_MAX_BYTES)
 }
 function readLines(file) {
   try {
-    return readFileSync2(file, "utf8").split("\n").filter(Boolean);
+    return readFileSync3(file, "utf8").split("\n").filter(Boolean);
   } catch {
     return [];
   }
@@ -5617,8 +5706,8 @@ function enqueue(home, item) {
     const lines = readLines(file);
     if (size > QUEUE_MAX_BYTES || lines.length > QUEUE_MAX_LINES) {
       const tmp = `${file}.${process.pid}.tmp`;
-      writeFileSync2(tmp, capLines(lines).join("\n") + "\n", { mode: 384 });
-      renameSync3(tmp, file);
+      writeFileSync3(tmp, capLines(lines).join("\n") + "\n", { mode: 384 });
+      renameSync4(tmp, file);
     }
   }
 }
@@ -5632,18 +5721,18 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
   const claimed = [];
   for (const f of readdirSync(home)) {
     if (!f.startsWith("queue.jsonl.flushing.")) continue;
-    const p = join3(home, f);
+    const p = join4(home, f);
     try {
       if (Date.now() - statSync2(p).mtimeMs <= STALE_FLUSH_MS) continue;
       const claim = `${mine}.stale`;
-      renameSync3(p, claim);
+      renameSync4(p, claim);
       claimed.push(...readLines(claim));
-      unlinkSync(claim);
+      unlinkSync2(claim);
     } catch {
     }
   }
   try {
-    renameSync3(file, mine);
+    renameSync4(file, mine);
     claimed.push(...readLines(mine));
   } catch {
   }
@@ -5664,7 +5753,7 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
   const rest = claimed.slice(i);
   if (rest.length) appendFileSync2(file, rest.join("\n") + "\n", { mode: 384 });
   try {
-    unlinkSync(mine);
+    unlinkSync2(mine);
   } catch {
   }
   return ok && rest.length === 0;
@@ -5672,9 +5761,9 @@ async function flushQueue(home, send, batch = FLUSH_BATCH) {
 
 // src/runtime.ts
 import { homedir as homedir2 } from "node:os";
-import { join as join4, resolve, sep } from "node:path";
+import { join as join5, resolve, sep } from "node:path";
 var isGrokEnv = (env) => !!(env.GROK_HOOK_EVENT || env.GROK_SESSION_ID);
-var codexHome = (env) => env.CODEX_HOME || join4(homedir2(), ".codex");
+var codexHome = (env) => env.CODEX_HOME || join5(homedir2(), ".codex");
 function isCodexRun(raw, env, hint) {
   if (isGrokEnv(env)) return false;
   if (hint === "codex") return true;
@@ -5814,14 +5903,21 @@ var GIT_TIMEOUT_MS = 500;
 var TAIL_TIMEOUT_MS = 300;
 var QUICK_GIT_TIMEOUT_MS = 300;
 var TOKEN_REFUSED = "Token refused. Run /reconnect:connect.";
-var refusedMarker = (home) => join5(home, "token-refused");
+var refusedMarker = (home) => join6(home, "token-refused");
 function makeSender(cfg, deadline) {
   return async (item) => {
     if (deadline.remaining() < 50) return false;
     let refusal = null;
-    const r = await postJson(cfg, "/events", item, deadline.cap(NETWORK_TIMEOUT_MS), (x) => {
-      refusal = x;
-    });
+    const r = await postJson(
+      cfg,
+      "/events",
+      item,
+      deadline.cap(NETWORK_TIMEOUT_MS),
+      (x) => {
+        refusal = x;
+      },
+      { max: ANSWER_READ_MAX, read: (text) => rememberAccount(cfg.home, text) }
+    );
     if (r === "drop") {
       const why = refusal;
       log(
@@ -5832,9 +5928,9 @@ function makeSender(cfg, deadline) {
     try {
       if (r === "unauthorized" && !existsSync(refusedMarker(cfg.home))) {
         log(cfg.home, `${TOKEN_REFUSED} (API at ${cfg.url} answered 401; events stay queued)`);
-        writeFileSync3(refusedMarker(cfg.home), "", { mode: 384 });
+        writeFileSync4(refusedMarker(cfg.home), "", { mode: 384 });
       } else if (r === "ok" && existsSync(refusedMarker(cfg.home))) {
-        unlinkSync2(refusedMarker(cfg.home));
+        unlinkSync3(refusedMarker(cfg.home));
       }
     } catch {
     }
@@ -5859,7 +5955,7 @@ function passParentSession(sessionId, env, home) {
   try {
     let lead = "";
     if (existsSync(file)) {
-      const text = readFileSync3(file, "utf8");
+      const text = readFileSync4(file, "utf8");
       if (text.length > 0 && !text.endsWith("\n")) lead = "\n";
     }
     appendFileSync3(file, `${lead}export ${PARENT_SESSION_ENV}=${shellQuote(sessionId)}
@@ -5920,6 +6016,8 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
       envelope.transcriptTail = lastAssistantMessage ? capRedacted(`assistant: ${lastAssistantMessage}`, TRANSCRIPT_TAIL_MAX_CHARS) : null;
     }
   }
+  if (!cfg.sendPrompt && typeof envelope.transcriptTail === "string")
+    envelope.transcriptTail = dropUserMessages(envelope.transcriptTail) || null;
   if (event === "UserPromptSubmit" && cfg.sendPrompt && typeof input.prompt === "string") {
     const text = redact(input.prompt);
     envelope.prompt = text.slice(0, PROMPT_MAX_CHARS);
@@ -5949,12 +6047,12 @@ import {
   copyFileSync,
   existsSync as existsSync2,
   mkdirSync as mkdirSync4,
-  readFileSync as readFileSync4,
-  renameSync as renameSync4,
-  writeFileSync as writeFileSync4
+  readFileSync as readFileSync5,
+  renameSync as renameSync5,
+  writeFileSync as writeFileSync5
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname, join as join6 } from "node:path";
+import { dirname, join as join7 } from "node:path";
 
 // src/hook-commands.ts
 function hookArgs() {
@@ -5966,7 +6064,7 @@ function hookArgs() {
 
 // src/commands/install.ts
 var PLUGIN_TIP = "Tip: the Claude Code plugin is easier and updates itself. See docs/HOOKS.md.\n";
-var settingsPath = () => join6(homedir3(), ".claude", "settings.json");
+var settingsPath = () => join7(homedir3(), ".claude", "settings.json");
 function wantedCommands(bin) {
   const out = {};
   for (const [event, list] of Object.entries(hookArgs()))
@@ -5996,7 +6094,7 @@ function mergeSettings(current, bin) {
 function readSettings(file, out, verb) {
   if (!existsSync2(file)) return {};
   try {
-    return JSON.parse(readFileSync4(file, "utf8"));
+    return JSON.parse(readFileSync5(file, "utf8"));
   } catch {
     out(`Cannot read ${file}: it is not valid JSON. Fix it, then run ${verb} again.
 `);
@@ -6012,8 +6110,8 @@ function writeSettings(file, next, out) {
 `);
   }
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync4(tmp, JSON.stringify(next, null, 2) + "\n");
-  renameSync4(tmp, file);
+  writeFileSync5(tmp, JSON.stringify(next, null, 2) + "\n");
+  renameSync5(tmp, file);
 }
 function install(bin, out, file = settingsPath()) {
   out(PLUGIN_TIP);
@@ -6040,6 +6138,12 @@ var SOURCE_TEXT = {
   plugin: "the plugin settings",
   file: "~/.reconnect/config.json (reconnect connect)"
 };
+var OFF_TEXT = {
+  account: "turned off in Reconnect Settings",
+  env: "RECONNECT_SEND_PROMPT=off on this computer",
+  file: '"sendPrompt": "off" in ~/.reconnect/config.json'
+};
+var typedMessagesLine = (cfg) => cfg.sendPrompt ? "Typed messages: sent" : `Typed messages: not sent (${cfg.sendPromptOff.map((s) => OFF_TEXT[s]).join("; ")})`;
 async function get(url, token) {
   try {
     const res = await fetch(url, {
@@ -6058,6 +6162,8 @@ async function status(cfg, out) {
   out(`Token from: ${cfg.tokenSource ? SOURCE_TEXT[cfg.tokenSource] : "none"}
 `);
   if (cfg.deviceId) out(`Computer id: ${cfg.deviceId}
+`);
+  out(`${typedMessagesLine(cfg)}
 `);
   const health = await get(`${cfg.url}/health`);
   if (health !== 200) {
@@ -6174,15 +6280,15 @@ function uninstall(extraBin, out, file = settingsPath()) {
 }
 
 // src/plugin-guard.ts
-import { readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { readFileSync as readFileSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 var PLUGIN_ID = "reconnect@reconnect-plugins";
 var MAX_FILE_BYTES = 1024 * 1024;
-var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join7(homedir4(), ".claude");
-var grokHome = (env) => env.GROK_HOME || join7(homedir4(), ".grok");
+var claudeDir = (env) => env.CLAUDE_CONFIG_DIR || join8(homedir4(), ".claude");
+var grokHome = (env) => env.GROK_HOME || join8(homedir4(), ".grok");
 function readJson(file) {
-  const text = readFileSync5(file, "utf8");
+  const text = readFileSync6(file, "utf8");
   if (text.length > MAX_FILE_BYTES) throw new Error("too big");
   return JSON.parse(text);
 }
@@ -6195,7 +6301,7 @@ function hasReconnectKey(v, depth = 0) {
 }
 function grokPluginInstalled(env = process.env) {
   try {
-    const reg = readJson(join7(grokHome(env), "installed-plugins", "registry.json"));
+    const reg = readJson(join8(grokHome(env), "installed-plugins", "registry.json"));
     return Object.values(reg?.repos ?? {}).some(
       (r) => Object.keys(r?.plugins ?? {}).includes("reconnect")
     );
@@ -6206,11 +6312,11 @@ function grokPluginInstalled(env = process.env) {
 function pluginActive(env = process.env) {
   try {
     const dir = claudeDir(env);
-    const installed = readJson(join7(dir, "plugins", "installed_plugins.json"));
+    const installed = readJson(join8(dir, "plugins", "installed_plugins.json"));
     if (!hasReconnectKey(installed?.plugins)) return false;
     let settings = {};
     try {
-      settings = readJson(join7(dir, "settings.json"));
+      settings = readJson(join8(dir, "settings.json"));
     } catch {
     }
     return settings?.enabledPlugins?.[PLUGIN_ID] !== false;
@@ -6222,10 +6328,10 @@ function skipLegacyRun(home, env = process.env) {
   if (env.CLAUDE_PLUGIN_ROOT || env.GROK_PLUGIN_ROOT) return false;
   if (!pluginActive(env) && !(isGrokEnv(env) && grokPluginInstalled(env))) return false;
   const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const mark = join7(home, "legacy-skip.day");
+  const mark = join8(home, "legacy-skip.day");
   let last = "";
   try {
-    last = readFileSync5(mark, "utf8").trim();
+    last = readFileSync6(mark, "utf8").trim();
   } catch {
   }
   if (last !== day) {
@@ -6234,7 +6340,7 @@ function skipLegacyRun(home, env = process.env) {
       'old settings hook skipped: the Reconnect plugin sends this event. Run "reconnect uninstall" once.'
     );
     try {
-      writeFileSync5(mark, day + "\n", { mode: 384 });
+      writeFileSync6(mark, day + "\n", { mode: 384 });
     } catch {
     }
   }
