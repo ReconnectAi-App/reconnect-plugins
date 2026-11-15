@@ -110,6 +110,11 @@ messages** (plugin 1.9.0 or later). Then the plugin sends no typed messages, als
 the transcript. The plugin learns the setting from the answer to its next event. On the same page
 you can delete the saved messages. `/reconnect:status` shows if typed messages are sent.
 
+In Claude Code, the plugin also sends where the session runs (plugin 1.10.0 or later): the value of
+`CLAUDE_CODE_ENTRYPOINT` and, in a Claude Code cloud session, its cloud session id. Reconnect then
+shows **Open in Claude** or **Open in VS Code** on the lane card. A cloud session shows in Reconnect
+only when this plugin is installed and connected in that cloud environment.
+
 ## Update
 
 Updates come by themselves when auto-update is on. To turn it on: `/plugin` > Marketplaces >
