@@ -104,6 +104,12 @@ transcript (at most 24 000 characters). Secrets in that text are replaced before
 computer. The full transcript is never sent. To send no transcript text, set
 `RECONNECT_SEND_TRANSCRIPT_TAIL=off` in your environment.
 
+When you send a message to your coding agent, the plugin also sends the text that you typed, with
+secrets replaced. To stop this, open Reconnect > Settings > Privacy and turn off **Save my typed
+messages** (plugin 1.9.0 or later). Then the plugin sends no typed messages, also not in the end of
+the transcript. The plugin learns the setting from the answer to its next event. On the same page
+you can delete the saved messages. `/reconnect:status` shows if typed messages are sent.
+
 ## Update
 
 Updates come by themselves when auto-update is on. To turn it on: `/plugin` > Marketplaces >
