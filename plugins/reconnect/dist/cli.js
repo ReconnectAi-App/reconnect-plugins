@@ -5198,6 +5198,11 @@ var JIRA_RE = new RegExp(`(?<![A-Za-z0-9-])${TICKET_KEY_RE.source}(?![\\w-])`, "
 // ../shared/dist/esm/platform.js
 var PLATFORM_SCOPES = ["none", "agents", "tag", "all"];
 var PLATFORM_STATUSES = ["connected", "error", "unreachable"];
+var PLATFORM_IDLE_HOURS_OPTIONS = [1, 4, 12, 24, 72, 168];
+var PLATFORM_IDLE_HOURS_DEFAULT = 1;
+var idleHours = external_exports.number().int().refine((h) => PLATFORM_IDLE_HOURS_OPTIONS.includes(h), {
+  message: "Not one of the idle times"
+});
 var PLATFORM_MAX_AGENT_IDS = 200;
 var AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 var SavePlatformKeySchema = external_exports.object({
@@ -5206,7 +5211,9 @@ var SavePlatformKeySchema = external_exports.object({
 var SavePlatformScopeSchema = external_exports.object({
   scope: external_exports.enum(PLATFORM_SCOPES),
   agentIds: external_exports.array(external_exports.string().regex(AGENT_ID_RE, "Not an agent id")).max(PLATFORM_MAX_AGENT_IDS).optional(),
-  confirmAll: external_exports.boolean().optional()
+  confirmAll: external_exports.boolean().optional(),
+  /** Not sent: the saved value stays. */
+  idleCloseHours: idleHours.optional()
 }).strict();
 var iso4 = external_exports.string().datetime({ offset: true });
 var PlatformAgentSchema = external_exports.object({
@@ -5226,6 +5233,8 @@ var PlatformViewSchema = external_exports.object({
   lastCheckedAt: iso4.nullable(),
   scope: external_exports.enum(PLATFORM_SCOPES),
   agentIds: external_exports.array(external_exports.string()),
+  /** Hours without activity after which an idle session closes its lane (B298). */
+  idleCloseHours: external_exports.number().int().positive().default(PLATFORM_IDLE_HOURS_DEFAULT),
   /** Agents of the workspace (cached 60 seconds). Empty when not connected or on an error. */
   agents: external_exports.array(PlatformAgentSchema),
   /** Sessions in the workspace that are not terminated. */
