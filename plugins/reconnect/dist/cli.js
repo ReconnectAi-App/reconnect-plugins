@@ -4112,17 +4112,23 @@ var DistilledCardSchema = external_exports.object({
 });
 
 // ../shared/dist/esm/open-link.js
-var OPEN_APPS = ["claude", "vscode", "codex"];
+var OPEN_APPS = ["claude", "vscode", "codex", "console"];
 var OpenLinkSchema = external_exports.object({ app: external_exports.enum(OPEN_APPS), url: external_exports.string() });
 var REMOTE_SESSION_ID_RE = /^cse_([A-Za-z0-9]{1,100})$/;
 var ENTRYPOINT_RE = /^[a-z0-9_-]{1,40}$/;
 
 // ../shared/dist/esm/runtimes.js
-var RUNTIMES = ["claude_code", "grok_build", "codex"];
+var RUNTIMES = ["claude_code", "grok_build", "codex", "claude_platform"];
+var HOOK_RUNTIMES = [
+  "claude_code",
+  "grok_build",
+  "codex"
+];
 var RUNTIME_LABEL = {
   claude_code: "Claude Code",
   grok_build: "Grok Build",
-  codex: "Codex"
+  codex: "Codex",
+  claude_platform: "Claude Platform"
 };
 
 // ../shared/dist/esm/redact.js
@@ -4401,13 +4407,14 @@ function renderTranscriptTail(jsonl, maxChars, partial, opts = {}) {
   const rendered = opts.runtime === "grok_build" ? renderGrokTranscript(text, opts.lastAssistantMessage) : opts.runtime === "codex" ? renderCodexTranscript(text, opts.lastAssistantMessage) : renderTranscript(text);
   return capRedacted(rendered, maxChars);
 }
+var endsUserBlock = (line) => line.startsWith("assistant: ") || line.startsWith("[tool_") || line.startsWith("[error] ");
 function dropUserMessages(tail) {
   const kept = [];
   let inUser = false;
   for (const line of tail.split("\n")) {
     if (line.startsWith("user: "))
       inUser = true;
-    else if (line.startsWith("assistant: ") || line.startsWith("[tool_"))
+    else if (endsUserBlock(line))
       inUser = false;
     if (!inUser)
       kept.push(line);
@@ -4428,7 +4435,7 @@ var HOOK_EVENTS = [
   "SubagentStart"
 ];
 var PROMPT_MAX_CHARS = 2e4;
-var LaneSourceSchema = external_exports.enum(["env", "branch_ticket", "branch", "cwd"]);
+var LaneSourceSchema = external_exports.enum(["env", "branch_ticket", "branch", "cwd", "platform"]);
 var EventEnvelopeSchema = external_exports.object({
   v: external_exports.literal(1),
   eventId: external_exports.string().uuid(),
@@ -4468,6 +4475,11 @@ var EventEnvelopeSchema = external_exports.object({
      */
     scoped: external_exports.boolean().optional()
   }),
+  /**
+   * Claude Platform only (SPEC-v2 V2-F31): the lane title in plain words (agent name and session
+   * title). The API uses it only for `lane.source` `platform`. Hooks never send it.
+   */
+  laneTitle: external_exports.string().min(1).max(200).optional(),
   git: external_exports.object({
     branch: external_exports.string().nullable(),
     headSha: external_exports.string().nullable(),
@@ -4734,8 +4746,9 @@ var LaneProcessSchema = external_exports.object({
   endedAt: iso.nullable(),
   running: external_exports.boolean(),
   /**
-   * Shell command that resumes the session. null for subagents and humans, and for a Claude Code
-   * cloud session (its folder is not on the user's computer; SPEC-v2 V2-F27).
+   * Shell command that resumes the session. null for subagents and humans, for a Claude Code
+   * cloud session (its folder is not on the user's computer; SPEC-v2 V2-F27) and for a Claude
+   * Platform session (no resume command; SPEC-v2 V2-F31).
    */
   resumeCommand: external_exports.string().nullable(),
   /** Link that opens this session in its app (SPEC-v2 V2-F27). null = none; missing = older API. */
@@ -5181,6 +5194,45 @@ var WaitlistSendInviteResponseSchema = external_exports.object({
 
 // ../shared/dist/esm/refs.js
 var JIRA_RE = new RegExp(`(?<![A-Za-z0-9-])${TICKET_KEY_RE.source}(?![\\w-])`, "g");
+
+// ../shared/dist/esm/platform.js
+var PLATFORM_SCOPES = ["none", "agents", "tag", "all"];
+var PLATFORM_STATUSES = ["connected", "error", "unreachable"];
+var PLATFORM_MAX_AGENT_IDS = 200;
+var AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+var SavePlatformKeySchema = external_exports.object({
+  apiKey: external_exports.string().trim().min(20, "Paste the whole Claude API key").max(500, "Paste the whole Claude API key")
+}).strict();
+var SavePlatformScopeSchema = external_exports.object({
+  scope: external_exports.enum(PLATFORM_SCOPES),
+  agentIds: external_exports.array(external_exports.string().regex(AGENT_ID_RE, "Not an agent id")).max(PLATFORM_MAX_AGENT_IDS).optional(),
+  confirmAll: external_exports.boolean().optional()
+}).strict();
+var iso4 = external_exports.string().datetime({ offset: true });
+var PlatformAgentSchema = external_exports.object({
+  id: external_exports.string(),
+  name: external_exports.string(),
+  /** Sessions of this agent that are not terminated. */
+  openSessions: external_exports.number().int().nonnegative(),
+  /** Last activity of the newest session of this agent. null = no session found. */
+  lastSessionAt: iso4.nullable()
+});
+var PlatformViewSchema = external_exports.object({
+  connected: external_exports.boolean(),
+  /** Last 4 characters of the key. */
+  keyHint: external_exports.string().nullable(),
+  status: external_exports.enum(PLATFORM_STATUSES).nullable(),
+  statusMessage: external_exports.string().nullable(),
+  lastCheckedAt: iso4.nullable(),
+  scope: external_exports.enum(PLATFORM_SCOPES),
+  agentIds: external_exports.array(external_exports.string()),
+  /** Agents of the workspace (cached 60 seconds). Empty when not connected or on an error. */
+  agents: external_exports.array(PlatformAgentSchema),
+  /** Sessions in the workspace that are not terminated. */
+  openSessions: external_exports.number().int().nonnegative(),
+  /** Sessions with the Reconnect tag that are not terminated. */
+  taggedSessions: external_exports.number().int().nonnegative()
+});
 
 // src/config.ts
 import { readFileSync as readFileSync2 } from "node:fs";
@@ -6416,7 +6468,7 @@ Commands:
 function runtimeArg(args) {
   const i = args.indexOf("--runtime");
   const v = i >= 0 ? args[i + 1] : void 0;
-  return v ? { runtime: v } : {};
+  return v && HOOK_RUNTIMES.includes(v) ? { runtime: v } : {};
 }
 function parseArgs(argv) {
   const [cmd, arg, val] = argv;
