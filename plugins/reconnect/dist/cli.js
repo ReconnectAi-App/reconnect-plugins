@@ -4694,6 +4694,11 @@ var QueueItemSchema = external_exports.object({
   sessionClosedAt: iso.nullable(),
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
+  /**
+   * Where the lane's newest session runs: the name of the connected computer, or "Cloud" for a
+   * Claude Code cloud session (SPEC-v2 V2-F34). null = not known; missing = older API.
+   */
+  computer: external_exports.string().nullable().optional(),
   /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
   summaryStatus: SummaryStatusSchema.nullable().optional(),
   /** Main lane of a helper lane (SPEC-v2 V2-F14). Set only on an orphan helper row. Missing = older API. */
@@ -4811,6 +4816,11 @@ var LaneDetailSchema = external_exports.object({
   sessionClosedAt: iso.nullable(),
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
+  /**
+   * Where the lane's newest session runs: the name of the connected computer, or "Cloud" for a
+   * Claude Code cloud session (SPEC-v2 V2-F34). null = not known; missing = older API.
+   */
+  computer: external_exports.string().nullable().optional(),
   /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
   summaryStatus: SummaryStatusSchema.nullable().optional(),
   /**
@@ -4966,8 +4976,14 @@ var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
 var AWS_PROFILE_PATTERN = /^[A-Za-z0-9_.@+-]{1,64}$/;
 var emptyToUndefined = (v) => typeof v === "string" && !v.trim() ? void 0 : v;
 var BEDROCK_AUTH = ["api_key", "access_key", "server"];
+var BEDROCK_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}(\[1[mM]\])?$/;
+var BEDROCK_MODEL_ID_MESSAGE = "Use letters, digits and . _ : / - only";
+function bedrockModelIdForAws(id) {
+  return id.trim().replace(/\[1[mM]\]$/, "");
+}
 var AWS_ACCESS_KEY_ID_PATTERN = /^(AKIA|ASIA)[A-Z0-9]{16}$/;
 var awsRegion = external_exports.string().trim().toLowerCase().regex(AWS_REGION_PATTERN, "Enter an AWS region, e.g. us-east-1");
+var awsModelId = external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(BEDROCK_MODEL_ID_PATTERN, BEDROCK_MODEL_ID_MESSAGE).transform(bedrockModelIdForAws).optional());
 var AnthropicSettings = external_exports.object({
   provider: external_exports.literal("anthropic"),
   apiKey: external_exports.string().trim().min(8, "Paste the whole API key").max(500)
@@ -4985,12 +5001,14 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     provider: external_exports.literal("bedrock"),
     awsAuth: external_exports.literal("api_key"),
     awsRegion,
+    awsModelId,
     apiKey: external_exports.string().trim().min(20, "Paste the whole Bedrock API key").max(4e3, "Paste the whole Bedrock API key")
   }).strict(),
   external_exports.object({
     provider: external_exports.literal("bedrock"),
     awsAuth: external_exports.literal("access_key"),
     awsRegion,
+    awsModelId,
     awsAccessKeyId: external_exports.string().trim().regex(AWS_ACCESS_KEY_ID_PATTERN, "Enter an access key ID, e.g. AKIA\u2026"),
     awsSecretAccessKey: external_exports.string().trim().length(40, "Paste the whole secret access key"),
     awsSessionToken: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().max(4e3, "The session token is too long").optional())
@@ -4999,6 +5017,7 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     provider: external_exports.literal("bedrock"),
     awsAuth: external_exports.literal("server"),
     awsRegion,
+    awsModelId,
     awsProfile: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(AWS_PROFILE_PATTERN, "Use letters, digits and - _ . @ + only").optional())
   }).strict()
 ]);
@@ -5032,6 +5051,10 @@ var ModelSettingsViewSchema = external_exports.object({
   /** How Bedrock connects to AWS (bedrock only). */
   awsAuth: external_exports.enum(BEDROCK_AUTH).nullable(),
   awsProfile: external_exports.string().nullable(),
+  /** The Bedrock model ID that this person typed (saved bedrock setting only), else null (V2-F33). */
+  awsModelId: external_exports.string().nullable(),
+  /** The model that Bedrock uses when the person typed no model ID. Shown as the placeholder. */
+  bedrockDefaultModelId: external_exports.string(),
   status: external_exports.enum(["untested", "ok", "error"]).nullable(),
   statusMessage: external_exports.string().nullable(),
   lastCheckedAt: iso3.nullable(),
@@ -5150,7 +5173,12 @@ var WaitlistJoinRequestSchema = external_exports.object({
   /** The person's own words. Kept verbatim; the API replaces only secrets before it stores it. */
   note: external_exports.preprocess(blankToUndefined, external_exports.string().max(WAITLIST_NOTE_MAX, "Use at most 500 characters.").optional()),
   /** Honeypot: people never see this field. When it is not empty, the API stores nothing. */
-  website: external_exports.string().max(2e3).optional()
+  website: external_exports.string().max(2e3).optional(),
+  /**
+   * Cloudflare Turnstile token from the landing page (SPEC-v2 V2-F30). Checked only when the API has
+   * TURNSTILE_SECRET_KEY. Never stored or logged.
+   */
+  turnstileToken: external_exports.string().max(2048).optional()
 });
 var WaitlistJoinResponseSchema = external_exports.object({ ok: external_exports.literal(true) });
 var WAITLIST_INVITE_STATES = ["open", "used", "expired", "canceled"];
