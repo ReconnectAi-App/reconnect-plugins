@@ -4111,6 +4111,34 @@ var DistilledCardSchema = external_exports.object({
   path: ["needsFromMe"]
 });
 
+// ../shared/dist/esm/typed-prompt.js
+var THREAD_WAKE_RE = /(?:^|\n)[ \t]*<wake\s+reason="/;
+var THREAD_SETUP_RE = /^(?:@"[^"\n]*"\s+|@\S+\s+)*<(?:session-context\s+nonce="|coordinator-relay>|relay\s+from=")/;
+var THREAD_MESSAGE_RE = /<message\b([^>]*)>([\s\S]*?)<\/message>/g;
+var XML_NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+function decodeXmlText(text) {
+  return text.replace(/&(?:#(\d{1,7})|#x([0-9a-fA-F]{1,6})|(amp|lt|gt|quot|apos));/g, (m, dec, hex, name) => {
+    if (name)
+      return XML_NAMED[name];
+    const code = dec ? Number(dec) : parseInt(hex, 16);
+    return code > 0 && code <= 1114111 ? String.fromCodePoint(code) : m;
+  });
+}
+function typedPromptText(text) {
+  if (!THREAD_WAKE_RE.test(text) && !THREAD_SETUP_RE.test(text.trimStart()))
+    return text;
+  const typed = [];
+  for (const m of text.matchAll(THREAD_MESSAGE_RE)) {
+    const attrs = m[1];
+    if (!/\sfrom="human"/.test(attrs) || !/\strigger="true"/.test(attrs))
+      continue;
+    const body = decodeXmlText(m[2]);
+    if (body.trim())
+      typed.push(body);
+  }
+  return typed.length ? typed.join("\n\n") : null;
+}
+
 // ../shared/dist/esm/open-link.js
 var OPEN_APPS = ["claude", "vscode", "codex", "console"];
 var OpenLinkSchema = external_exports.object({ app: external_exports.enum(OPEN_APPS), url: external_exports.string() });
@@ -4232,14 +4260,18 @@ function renderEntry(e) {
   if (role !== "user" && role !== "assistant")
     return [];
   const content = e.message?.content;
+  const line = (text) => {
+    const t = role === "user" ? typedPromptText(text) : text;
+    return t?.trim() ? [`${role}: ${t}`] : [];
+  };
   if (typeof content === "string")
-    return content.trim() ? [`${role}: ${content}`] : [];
+    return line(content);
   if (!Array.isArray(content))
     return [];
   const out = [];
   for (const b of content) {
-    if (b?.type === "text" && typeof b.text === "string" && b.text.trim())
-      out.push(`${role}: ${b.text}`);
+    if (b?.type === "text" && typeof b.text === "string")
+      out.push(...line(b.text));
     else if (b?.type === "tool_use")
       out.push(`[tool_use ${String(b.name ?? "tool")}]`);
     else if (b?.type === "tool_result") {
@@ -4518,7 +4550,9 @@ var INJECTED_PROMPT_TAGS = [
 ];
 var INJECTED_PROMPT_RE = new RegExp(`^<(?:${INJECTED_PROMPT_TAGS.join("|")})[\\s>]`);
 function isInjectedPrompt(text) {
-  return typeof text === "string" && INJECTED_PROMPT_RE.test(text.trimStart());
+  if (typeof text !== "string")
+    return false;
+  return INJECTED_PROMPT_RE.test(text.trimStart()) || typedPromptText(text) === null;
 }
 
 // ../shared/dist/esm/lane.js
@@ -4694,6 +4728,11 @@ var QueueItemSchema = external_exports.object({
   sessionClosedAt: iso.nullable(),
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
+  /**
+   * Where the lane's newest session runs: the name of the connected computer, or "Cloud" for a
+   * Claude Code cloud session (SPEC-v2 V2-F34). null = not known; missing = older API.
+   */
+  computer: external_exports.string().nullable().optional(),
   /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
   summaryStatus: SummaryStatusSchema.nullable().optional(),
   /** Main lane of a helper lane (SPEC-v2 V2-F14). Set only on an orphan helper row. Missing = older API. */
@@ -4811,6 +4850,11 @@ var LaneDetailSchema = external_exports.object({
   sessionClosedAt: iso.nullable(),
   /** Coding agent of the lane's newest session. Missing = Claude Code (older API). */
   runtime: external_exports.enum(RUNTIMES).optional(),
+  /**
+   * Where the lane's newest session runs: the name of the connected computer, or "Cloud" for a
+   * Claude Code cloud session (SPEC-v2 V2-F34). null = not known; missing = older API.
+   */
+  computer: external_exports.string().nullable().optional(),
   /** Summary being written, or the last run failed or found no AI model. null = nothing to show; missing = older API. */
   summaryStatus: SummaryStatusSchema.nullable().optional(),
   /**
@@ -4966,8 +5010,14 @@ var AWS_REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
 var AWS_PROFILE_PATTERN = /^[A-Za-z0-9_.@+-]{1,64}$/;
 var emptyToUndefined = (v) => typeof v === "string" && !v.trim() ? void 0 : v;
 var BEDROCK_AUTH = ["api_key", "access_key", "server"];
+var BEDROCK_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}(\[1[mM]\])?$/;
+var BEDROCK_MODEL_ID_MESSAGE = "Use letters, digits and . _ : / - only";
+function bedrockModelIdForAws(id) {
+  return id.trim().replace(/\[1[mM]\]$/, "");
+}
 var AWS_ACCESS_KEY_ID_PATTERN = /^(AKIA|ASIA)[A-Z0-9]{16}$/;
 var awsRegion = external_exports.string().trim().toLowerCase().regex(AWS_REGION_PATTERN, "Enter an AWS region, e.g. us-east-1");
+var awsModelId = external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(BEDROCK_MODEL_ID_PATTERN, BEDROCK_MODEL_ID_MESSAGE).transform(bedrockModelIdForAws).optional());
 var AnthropicSettings = external_exports.object({
   provider: external_exports.literal("anthropic"),
   apiKey: external_exports.string().trim().min(8, "Paste the whole API key").max(500)
@@ -4985,12 +5035,14 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     provider: external_exports.literal("bedrock"),
     awsAuth: external_exports.literal("api_key"),
     awsRegion,
+    awsModelId,
     apiKey: external_exports.string().trim().min(20, "Paste the whole Bedrock API key").max(4e3, "Paste the whole Bedrock API key")
   }).strict(),
   external_exports.object({
     provider: external_exports.literal("bedrock"),
     awsAuth: external_exports.literal("access_key"),
     awsRegion,
+    awsModelId,
     awsAccessKeyId: external_exports.string().trim().regex(AWS_ACCESS_KEY_ID_PATTERN, "Enter an access key ID, e.g. AKIA\u2026"),
     awsSecretAccessKey: external_exports.string().trim().length(40, "Paste the whole secret access key"),
     awsSessionToken: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().max(4e3, "The session token is too long").optional())
@@ -4999,6 +5051,7 @@ var BedrockSettings = external_exports.discriminatedUnion("awsAuth", [
     provider: external_exports.literal("bedrock"),
     awsAuth: external_exports.literal("server"),
     awsRegion,
+    awsModelId,
     awsProfile: external_exports.preprocess(emptyToUndefined, external_exports.string().trim().regex(AWS_PROFILE_PATTERN, "Use letters, digits and - _ . @ + only").optional())
   }).strict()
 ]);
@@ -5032,6 +5085,10 @@ var ModelSettingsViewSchema = external_exports.object({
   /** How Bedrock connects to AWS (bedrock only). */
   awsAuth: external_exports.enum(BEDROCK_AUTH).nullable(),
   awsProfile: external_exports.string().nullable(),
+  /** The Bedrock model ID that this person typed (saved bedrock setting only), else null (V2-F33). */
+  awsModelId: external_exports.string().nullable(),
+  /** The model that Bedrock uses when the person typed no model ID. Shown as the placeholder. */
+  bedrockDefaultModelId: external_exports.string(),
   status: external_exports.enum(["untested", "ok", "error"]).nullable(),
   statusMessage: external_exports.string().nullable(),
   lastCheckedAt: iso3.nullable(),
@@ -5150,7 +5207,12 @@ var WaitlistJoinRequestSchema = external_exports.object({
   /** The person's own words. Kept verbatim; the API replaces only secrets before it stores it. */
   note: external_exports.preprocess(blankToUndefined, external_exports.string().max(WAITLIST_NOTE_MAX, "Use at most 500 characters.").optional()),
   /** Honeypot: people never see this field. When it is not empty, the API stores nothing. */
-  website: external_exports.string().max(2e3).optional()
+  website: external_exports.string().max(2e3).optional(),
+  /**
+   * Cloudflare Turnstile token from the landing page (SPEC-v2 V2-F30). Checked only when the API has
+   * TURNSTILE_SECRET_KEY. Never stored or logged.
+   */
+  turnstileToken: external_exports.string().max(2048).optional()
 });
 var WaitlistJoinResponseSchema = external_exports.object({ ok: external_exports.literal(true) });
 var WAITLIST_INVITE_STATES = ["open", "used", "expired", "canceled"];
@@ -6125,7 +6187,7 @@ async function emit(event, rawInput, cfg, deadline, env = process.env, opts = {}
   if (!cfg.sendPrompt && typeof envelope.transcriptTail === "string")
     envelope.transcriptTail = dropUserMessages(envelope.transcriptTail) || null;
   if (event === "UserPromptSubmit" && cfg.sendPrompt && typeof input.prompt === "string") {
-    const text = redact(input.prompt);
+    const text = redact(typedPromptText(input.prompt) ?? input.prompt);
     envelope.prompt = text.slice(0, PROMPT_MAX_CHARS);
     if (text.length > PROMPT_MAX_CHARS) envelope.promptTruncated = true;
   }
